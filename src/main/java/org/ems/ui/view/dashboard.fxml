@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<BorderPane xmlns="http://javafx.com/javafx"
+            xmlns:fx="http://javafx.com/fxml"
+            fx:controller="org.example.ems.ui.controller.DashboardController">
+
+    <top>
+        <ToolBar>
+            <Button text="Events" onAction="#openEvents"/>
+            <Button text="Sessions" onAction="#openSessions"/>
+            <Button text="Tickets" onAction="#openTickets"/>
+
+            <Pane Hgrow="ALWAYS"/>
+
+            <Label text="Logged in as:"/>
+            <Label fx:id="userLabel" style="-fx-font-weight: bold;"/>
+        </ToolBar>
+    </top>
+
+    <center>
+        <VBox spacing="8" alignment="CENTER"
+              style="-fx-padding: 40;">
+            <Label text="Dashboard"
+                   style="-fx-font-size: 24px; -fx-font-weight: bold;"/>
+            <Label text="Select a module from the toolbar above."
+                   style="-fx-font-size: 14px;"/>
+        </VBox>
+    </center>
+</BorderPane>

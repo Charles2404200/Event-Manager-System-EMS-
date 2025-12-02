@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.layout.*?>
+<?import javafx.scene.control.*?>
+<?import javafx.geometry.Insets?>
+<?import javafx.geometry.Pos?>
+
+<BorderPane xmlns="http://javafx.com/javafx"
+            xmlns:fx="http://javafx.com/fxml"
+            fx:controller="org.example.ems.ui.controller.HomeController">
+
+    <!-- ===== TOP BAR ===== -->
+    <top>
+        <ToolBar prefHeight="50">
+            <Label text="EMS Home"
+                   style="-fx-font-size: 20px; -fx-font-weight: bold;"/>
+
+            <Pane Hgrow="ALWAYS"/>
+
+            <Label fx:id="roleLabel" style="-fx-font-size: 14px;"/>
+
+            <Button text="Logout" onAction="#onLogout"/>
+        </ToolBar>
+    </top>
+
+    <!-- ===== CENTER CONTENT ===== -->
+    <center>
+        <VBox spacing="20" alignment="TOP_CENTER" style="-fx-padding: 30;">
+
+            <Label fx:id="welcomeLabel"
+                   style="-fx-font-size: 26px; -fx-font-weight: bold;"/>
+
+            <Label fx:id="descriptionLabel"
+                   wrapText="true"
+                   maxWidth="600"
+                   style="-fx-font-size: 15px;"/>
+
+            <TilePane fx:id="actionTiles"
+                      hgap="15" vgap="15"
+                      alignment="CENTER"
+                      prefColumns="3"
+                      style="-fx-padding: 20;">
+            </TilePane>
+
+        </VBox>
+    </center>
+
+</BorderPane>

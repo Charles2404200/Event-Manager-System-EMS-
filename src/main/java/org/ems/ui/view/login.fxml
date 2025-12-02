@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<BorderPane xmlns="http://javafx.com/javafx"
+            xmlns:fx="http://javafx.com/fxml"
+            fx:controller="org.example.ems.ui.controller.LoginController">
+
+    <center>
+        <VBox spacing="10" alignment="CENTER"
+              BorderPane.alignment="CENTER"
+              style="-fx-padding: 40;">
+            <Label text="Event Management System"
+                   style="-fx-font-size: 22px; -fx-font-weight: bold;"/>
+
+            <Label text="Login" style="-fx-font-size: 16px;"/>
+
+            <TextField fx:id="emailField" promptText="Email"
+                       maxWidth="260"/>
+
+            <PasswordField fx:id="passwordField" promptText="Password"
+                           maxWidth="260"/>
+
+            <Button text="Login"
+                    maxWidth="260"
+                    onAction="#onLogin"/>
+
+            <Label fx:id="errorLabel"
+                   textFill="red"
+                   wrapText="true"
+                   maxWidth="260"/>
+        </VBox>
+    </center>
+</BorderPane>

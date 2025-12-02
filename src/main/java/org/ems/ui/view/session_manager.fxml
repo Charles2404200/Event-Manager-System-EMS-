@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<BorderPane xmlns="http://javafx.com/javafx"
+            xmlns:fx="http://javafx.com/fxml"
+            fx:controller="org.example.ems.ui.controller.SessionManagerController">
+
+    <top>
+        <ToolBar>
+            <Button text="Back" onAction="#backToDashboard"/>
+            <Label text="Session Manager"
+                   style="-fx-font-size: 18px; -fx-font-weight: bold;"/>
+            <Pane Hgrow="ALWAYS"/>
+            <Button text="Add Session" onAction="#onAddSession"/>
+            <Button text="Refresh" onAction="#onRefresh"/>
+        </ToolBar>
+    </top>
+
+    <center>
+        <TableView fx:id="sessionTable" prefHeight="500">
+            <columns>
+                <TableColumn fx:id="colId" text="ID" prefWidth="200"/>
+                <TableColumn fx:id="colTitle" text="Title" prefWidth="200"/>
+                <TableColumn fx:id="colStart" text="Start" prefWidth="180"/>
+                <TableColumn fx:id="colEnd" text="End" prefWidth="180"/>
+                <TableColumn fx:id="colVenue" text="Venue" prefWidth="160"/>
+            </columns>
+        </TableView>
+    </center>
+</BorderPane>
