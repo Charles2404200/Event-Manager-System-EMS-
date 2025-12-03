@@ -15,31 +15,43 @@ public class DatabaseInitializer {
 
     public static void initialize() {
         try (Connection conn = DatabaseConfig.getConnection()) {
+            System.out.println("✓ Database connection successful!");
+
             // Load schema.sql from resources
             try (InputStream in = DatabaseInitializer.class.getClassLoader()
                     .getResourceAsStream("db/schema.sql")) {
                 if (in == null) {
-                    throw new RuntimeException(" schema.sql not found at /resources/db/schema.sql");
+                    System.out.println("⚠ schema.sql not found - skipping schema initialization");
+                    return;
                 }
                 String sql = new String(in.readAllBytes(), StandardCharsets.UTF_8);
                 try (Statement st = conn.createStatement()) {
                     st.execute(sql);
                 }
             }
-            System.out.println(" Database schema initialized successfully.");
+            System.out.println("✓ Database schema initialized successfully.");
 
-            // Seed admin user only (no sample data)
+            // Seed admin user
             DataSeeder.seedAdminUser();
-            // DataSeeder.seedSampleData(); // DISABLED - no more automatic data seeding
 
         } catch (Exception e) {
-            if (e.getMessage() != null && e.getMessage().contains("already exists")) {
-                System.out.println("⚠ Database tables already exist, skipping initialization.");
-                DataSeeder.seedAdminUser();
-                // DataSeeder.seedSampleData(); // DISABLED - no more automatic data seeding
-            } else {
-                throw new RuntimeException(" Error initializing database: " + e.getMessage(), e);
-            }
+            System.err.println("\n╔════════════════════════════════════════════════════╗");
+            System.err.println("║  ❌ DATABASE CONNECTION FAILED                     ║");
+            System.err.println("╠════════════════════════════════════════════════════╣");
+            System.err.println("║  Error: " + e.getMessage());
+            System.err.println("║                                                    ║");
+            System.err.println("║  To fix:                                           ║");
+            System.err.println("║  1. Check application.properties in               ║");
+            System.err.println("║     src/main/resources/                           ║");
+            System.err.println("║  2. Verify database URL, username, password       ║");
+            System.err.println("║  3. Ensure database is running/accessible         ║");
+            System.err.println("║                                                    ║");
+            System.err.println("║  Continuing with UI in demo mode...               ║");
+            System.err.println("╚════════════════════════════════════════════════════╝\n");
+
+            // Don't crash - let app continue in demo mode
+            // In production, you might want to throw here
         }
     }
 }
+
