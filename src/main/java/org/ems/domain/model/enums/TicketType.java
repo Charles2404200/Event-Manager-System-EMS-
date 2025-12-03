@@ -6,5 +6,7 @@ package org.ems.domain.model.enums;
 public enum TicketType {
     GENERAL,
     VIP,
-    EARLY_BIRD
+    EARLY_BIRD,
+    STUDENT,
+    GROUP
 }

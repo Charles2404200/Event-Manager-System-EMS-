@@ -18,8 +18,8 @@
     </top>
 
     <center>
-        <VBox alignment="CENTER" spacing="20" style="-fx-padding: 30;">
-            <Label text="Welcome to Event Manager System" style="-fx-font-size: 28; -fx-font-weight: bold;"/>
+        <VBox fx:id="centerBox" alignment="CENTER" spacing="20" style="-fx-padding: 30;">
+            <Label fx:id="welcomeLabel" text="Welcome to Event Manager System" style="-fx-font-size: 28; -fx-font-weight: bold;"/>
             <Label text="Please select an option below to get started" style="-fx-font-size: 14; -fx-text-fill: #666;"/>
 
             <HBox spacing="15" alignment="CENTER" style="-fx-padding: 30;">
@@ -27,6 +27,7 @@
                 <Button text="Sign Up" prefWidth="150" prefHeight="50" style="-fx-font-size: 14;" onAction="#onSignup"/>
                 <Button text="View Events" prefWidth="150" prefHeight="50" style="-fx-font-size: 14;" onAction="#onViewEvents"/>
                 <Button text="Browse Presenters" prefWidth="150" prefHeight="50" style="-fx-font-size: 14;" onAction="#onBrowsePresenters"/>
+                <Button text="Logout" prefWidth="150" prefHeight="50" style="-fx-font-size: 14; -fx-background-color: #e74c3c; -fx-text-fill: white;" onAction="#onLogout"/>
             </HBox>
         </VBox>
     </center>

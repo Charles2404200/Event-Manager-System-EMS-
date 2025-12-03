@@ -1,12 +1,26 @@
 package org.ems.ui.controller;
 
 import javafx.fxml.FXML;
+import javafx.geometry.Insets;
 import javafx.scene.control.Label;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.layout.VBox;
+import javafx.scene.layout.HBox;
+import javafx.scene.control.Button;
+import javafx.concurrent.Task;
+import javafx.application.Platform;
 import org.ems.config.AppContext;
 import org.ems.domain.model.Person;
+import org.ems.domain.model.Attendee;
+import org.ems.domain.model.Presenter;
+import org.ems.domain.model.Event;
+import org.ems.domain.model.Session;
+import org.ems.domain.model.Ticket;
 import org.ems.domain.model.enums.Role;
 import org.ems.ui.stage.SceneManager;
+
+import java.time.LocalDateTime;
+import java.util.List;
 
 
 public class DashboardController {
@@ -29,6 +43,7 @@ public class DashboardController {
     public void initialize() {
         loadUserInfo();
         setupRoleBasedView();
+        loadDynamicContent();
     }
 
     /**
@@ -49,6 +64,279 @@ public class DashboardController {
         userNameLabel.setText("Welcome, " + currentUser.getFullName());
         userRoleLabel.setText("Role: " + getRoleDisplayName(userRole));
         userEmailLabel.setText(currentUser.getEmail());
+    }
+
+    /**
+     * Load dynamic content based on user role
+     */
+    private void loadDynamicContent() {
+        Task<Void> task = new Task<>() {
+            @Override
+            protected Void call() throws Exception {
+                try {
+                    switch (userRole) {
+                        case ATTENDEE:
+                            loadAttendeeContent();
+                            break;
+                        case PRESENTER:
+                            loadPresenterContent();
+                            break;
+                        case EVENT_ADMIN:
+                            loadEventAdminContent();
+                            break;
+                        case SYSTEM_ADMIN:
+                            // No dynamic content needed for now
+                            break;
+                    }
+                } catch (Exception e) {
+                    System.err.println("Error loading dynamic content: " + e.getMessage());
+                    e.printStackTrace();
+                }
+                return null;
+            }
+        };
+
+        new Thread(task).start();
+    }
+
+    /**
+     * Load attendee's upcoming events and tickets
+     */
+    private void loadAttendeeContent() {
+        try {
+            if (currentUser instanceof Attendee && appContext.ticketRepo != null && appContext.eventRepo != null) {
+                Attendee attendee = (Attendee) currentUser;
+
+                // Get all tickets for this attendee
+                List<Ticket> tickets = appContext.ticketRepo.findByAttendee(attendee.getId());
+
+                // Find the "Your Upcoming Events" section in attendeeSection
+                if (attendeeSection != null) {
+                    VBox upcomingEventsBox = findVBoxByTitle(attendeeSection, "Your Upcoming Events");
+                    if (upcomingEventsBox != null) {
+                        if (tickets.isEmpty()) {
+                            // No tickets, show message
+                            Platform.runLater(() -> updateUpcomingEventsDisplay(upcomingEventsBox, null));
+                        } else {
+                            // Get event and session details
+                            List<Event> allEvents = appContext.eventRepo.findAll();
+
+                            // Filter only upcoming events (start date in future)
+                            List<Event> upcomingEvents = new java.util.ArrayList<>();
+                            java.time.LocalDate today = java.time.LocalDate.now();
+
+                            for (Event event : allEvents) {
+                                // Check if attendee has ticket for this event
+                                boolean hasTicket = tickets.stream()
+                                    .anyMatch(t -> t.getEventId().equals(event.getId()));
+
+                                // Check if event is in future
+                                if (hasTicket && event.getStartDate() != null) {
+                                    java.time.LocalDate eventStart = event.getStartDate();
+                                    if (eventStart.isAfter(today)) {
+                                        upcomingEvents.add(event);
+                                    }
+                                }
+                            }
+
+                            // Update UI on FX Application Thread
+                            Platform.runLater(() -> updateUpcomingEventsDisplay(upcomingEventsBox, upcomingEvents));
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Error loading attendee content: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Load presenter's assigned sessions
+     */
+    private void loadPresenterContent() {
+        try {
+            if (currentUser instanceof Presenter && appContext.sessionRepo != null) {
+                Presenter presenter = (Presenter) currentUser;
+                List<Session> sessions = appContext.sessionRepo.findAll();
+
+                // Filter sessions assigned to this presenter
+                // Note: This requires checking presenter_session mapping table
+                // For now, we'll display info
+                System.out.println("Presenter sessions count: " + sessions.size());
+            }
+        } catch (Exception e) {
+            System.err.println("Error loading presenter content: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Load event admin's event statistics
+     */
+    private void loadEventAdminContent() {
+        try {
+            if (appContext.eventRepo != null && appContext.sessionRepo != null && appContext.ticketRepo != null) {
+                int totalEvents = appContext.eventRepo.findAll().size();
+                int totalSessions = appContext.sessionRepo.findAll().size();
+                int totalTickets = appContext.ticketRepo.findAll().size();
+
+                System.out.println("Event Admin - Events: " + totalEvents + ", Sessions: " + totalSessions + ", Tickets: " + totalTickets);
+            }
+        } catch (Exception e) {
+            System.err.println("Error loading event admin content: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Find VBox in a parent VBox by its title label
+     */
+    private VBox findVBoxByTitle(VBox parent, String titleText) {
+        for (var child : parent.getChildren()) {
+            if (child instanceof VBox) {
+                VBox vbox = (VBox) child;
+                for (var item : vbox.getChildren()) {
+                    if (item instanceof Label) {
+                        Label label = (Label) item;
+                        if (label.getText().contains(titleText)) {
+                            return vbox;
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Update upcoming events display with actual event data
+     */
+    private void updateUpcomingEventsDisplay(VBox container, List<Event> upcomingEvents) {
+        // Clear existing content except title
+        container.getChildren().retainAll(
+            container.getChildren().stream()
+                .filter(n -> n instanceof Label && ((Label) n).getStyle().contains("font-weight"))
+                .toList()
+        );
+
+        // Add upcoming events information
+        if (upcomingEvents == null || upcomingEvents.isEmpty()) {
+            Label noEventsLabel = new Label("No upcoming events - Browse and register for events to see them here");
+            noEventsLabel.setStyle("-fx-font-size: 12; -fx-text-fill: #999;");
+            container.getChildren().add(noEventsLabel);
+        } else {
+            // Sort events by start date
+            upcomingEvents.sort((e1, e2) -> {
+                if (e1.getStartDate() == null || e2.getStartDate() == null) return 0;
+                return e1.getStartDate().compareTo(e2.getStartDate());
+            });
+
+            // Display upcoming events
+            for (Event event : upcomingEvents) {
+                HBox eventBox = createUpcomingEventDisplayBox(event);
+                container.getChildren().add(eventBox);
+            }
+        }
+    }
+
+    /**
+     * Create a display box for an upcoming event with its sessions
+     */
+    private HBox createUpcomingEventDisplayBox(Event event) {
+        HBox box = new HBox(15);
+        box.setPadding(new Insets(10));
+        box.setStyle("-fx-border-color: #3498db; -fx-border-width: 1; -fx-padding: 10; -fx-border-radius: 5; -fx-background-color: #ecf0f1;");
+
+        VBox infoBox = new VBox(5);
+
+        // Event header
+        Label eventLabel = new Label("📅 " + (event.getName() != null ? event.getName() : "Unknown Event"));
+        eventLabel.setStyle("-fx-font-size: 12; -fx-font-weight: bold; -fx-text-fill: #2c3e50;");
+
+        Label typeLabel = new Label("Type: " + (event.getType() != null ? event.getType().name() : "N/A"));
+        typeLabel.setStyle("-fx-font-size: 11; -fx-text-fill: #555;");
+
+        Label dateLabel = new Label("Event Start: " + (event.getStartDate() != null ? event.getStartDate() : "N/A"));
+        dateLabel.setStyle("-fx-font-size: 11; -fx-text-fill: #27ae60; -fx-font-weight: bold;");
+
+        Label locationLabel = new Label("Location: " + (event.getLocation() != null ? event.getLocation() : "N/A"));
+        locationLabel.setStyle("-fx-font-size: 11; -fx-text-fill: #666;");
+
+        Label statusLabel = new Label("Status: " + (event.getStatus() != null ? event.getStatus().name() : "N/A"));
+        statusLabel.setStyle("-fx-font-size: 11; -fx-text-fill: #f39c12;");
+
+        infoBox.getChildren().addAll(eventLabel, typeLabel, dateLabel, locationLabel, statusLabel);
+
+        // Load and display sessions for this event that attendee has tickets for
+        try {
+            if (appContext.sessionRepo != null && appContext.ticketRepo != null && currentUser instanceof Attendee) {
+                Attendee attendee = (Attendee) currentUser;
+
+                // Get all sessions for this event
+                List<Session> allSessions = appContext.sessionRepo.findByEvent(event.getId());
+
+                // Get all tickets for attendee
+                List<Ticket> attendeeTickets = appContext.ticketRepo.findByAttendee(attendee.getId());
+
+                // Filter sessions that attendee has tickets for
+                List<Session> registeredSessions = new java.util.ArrayList<>();
+                for (Session session : allSessions) {
+                    boolean hasTicket = attendeeTickets.stream()
+                        .anyMatch(t -> t.getSessionId() != null && t.getSessionId().equals(session.getId()));
+                    if (hasTicket) {
+                        registeredSessions.add(session);
+                    }
+                }
+
+                if (!registeredSessions.isEmpty()) {
+                    Label sessionsLabel = new Label("Registered Sessions:");
+                    sessionsLabel.setStyle("-fx-font-size: 11; -fx-font-weight: bold; -fx-text-fill: #2c3e50; -fx-padding: 10 0 5 0;");
+                    infoBox.getChildren().add(sessionsLabel);
+
+                    // Sort sessions by start time
+                    registeredSessions.sort((s1, s2) -> {
+                        if (s1.getStart() == null || s2.getStart() == null) return 0;
+                        return s1.getStart().compareTo(s2.getStart());
+                    });
+
+                    // Display first 3 sessions (to avoid too much content)
+                    int count = 0;
+                    for (Session session : registeredSessions) {
+                        if (count >= 3) {
+                            Label moreLabel = new Label("  ... and " + (registeredSessions.size() - 3) + " more session(s)");
+                            moreLabel.setStyle("-fx-font-size: 10; -fx-text-fill: #999;");
+                            infoBox.getChildren().add(moreLabel);
+                            break;
+                        }
+
+                        // Session info
+                        String sessionInfo = "  • " + (session.getTitle() != null ? session.getTitle() : "Unknown") +
+                                " (" + (session.getStart() != null ? session.getStart().toLocalTime() : "N/A") + ")";
+                        Label sessionLabel = new Label(sessionInfo);
+                        sessionLabel.setStyle("-fx-font-size: 10; -fx-text-fill: #555;");
+                        infoBox.getChildren().add(sessionLabel);
+
+                        // Venue info
+                        if (session.getVenue() != null) {
+                            Label venueLabel = new Label("    Venue: " + session.getVenue());
+                            venueLabel.setStyle("-fx-font-size: 10; -fx-text-fill: #888;");
+                            infoBox.getChildren().add(venueLabel);
+                        }
+
+                        count++;
+                    }
+                } else {
+                    Label noSessionsLabel = new Label("(No registered sessions for this event)");
+                    noSessionsLabel.setStyle("-fx-font-size: 10; -fx-text-fill: #999;");
+                    infoBox.getChildren().add(noSessionsLabel);
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Error loading sessions for event: " + e.getMessage());
+        }
+
+        box.getChildren().add(infoBox);
+
+        return box;
     }
 
     /**
@@ -106,14 +394,12 @@ public class DashboardController {
 
     @FXML
     public void onViewMyTickets() {
-        // TODO: View attendee's tickets
-        System.out.println("View My Tickets clicked");
+        SceneManager.switchTo("my_tickets.fxml", "EMS - My Tickets");
     }
 
     @FXML
     public void onViewMyRegistrations() {
-        // TODO: View attendee's registered sessions
-        System.out.println("View My Registrations clicked");
+        SceneManager.switchTo("my_registrations.fxml", "EMS - My Registrations");
     }
 
     @FXML

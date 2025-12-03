@@ -4,13 +4,17 @@ import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
+import javafx.scene.layout.VBox;
+import javafx.geometry.Insets;
 import org.ems.config.AppContext;
-import org.ems.domain.model.Event;
+import org.ems.domain.model.*;
 import org.ems.domain.repository.EventRepository;
+import org.ems.domain.model.enums.TicketStatus;
+import org.ems.domain.model.enums.PaymentStatus;
 import org.ems.ui.stage.SceneManager;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.math.BigDecimal;
+import java.util.*;
 
 /**
  * @author <your group number>
@@ -25,13 +29,14 @@ public class ViewEventsController {
 
     private EventRepository eventRepo;
     private List<EventRow> allEvents;
+    private AppContext appContext;
 
     @FXML
     public void initialize() {
         try {
             // Get repository from context
-            AppContext context = AppContext.get();
-            eventRepo = context.eventRepo;
+            appContext = AppContext.get();
+            eventRepo = appContext.eventRepo;
 
             // Setup type filter combo
             typeFilterCombo.setItems(FXCollections.observableArrayList(
@@ -90,15 +95,43 @@ public class ViewEventsController {
                 try {
                     List<Event> events = eventRepo.findAll();
                     for (Event event : events) {
+                        // Load session count
+                        int sessionCount = 0;
+                        if (appContext.sessionRepo != null) {
+                            try {
+                                sessionCount = appContext.sessionRepo.findByEvent(event.getId()).size();
+                            } catch (Exception e) {
+                                System.err.println("Error loading sessions: " + e.getMessage());
+                            }
+                        }
+
+                        // Check if current user is registered (has ticket for this event)
+                        boolean isRegistered = false;
+                        if (appContext.currentUser instanceof Attendee && appContext.ticketRepo != null) {
+                            try {
+                                Attendee attendee = (Attendee) appContext.currentUser;
+                                List<Ticket> tickets = appContext.ticketRepo.findByAttendee(attendee.getId());
+                                for (Ticket ticket : tickets) {
+                                    if (ticket.getEventId().equals(event.getId())) {
+                                        isRegistered = true;
+                                        break;
+                                    }
+                                }
+                            } catch (Exception e) {
+                                System.err.println("Error checking registration: " + e.getMessage());
+                            }
+                        }
+
                         allEvents.add(new EventRow(
+                                event.getId(),
                                 event.getName(),
                                 event.getType().name(),
                                 event.getLocation(),
                                 event.getStartDate() != null ? event.getStartDate().toString() : "N/A",
                                 event.getEndDate() != null ? event.getEndDate().toString() : "N/A",
                                 event.getStatus().name(),
-                                0,  // TODO: Load session count from sessions table
-                                false  // TODO: Check if current user is registered
+                                sessionCount,
+                                isRegistered
                         ));
                     }
                     System.out.println(" Loaded " + events.size() + " events");
@@ -184,21 +217,154 @@ public class ViewEventsController {
     }
 
     @FXML
-    public void onRegister() {
+    public void onBuyTicket() {
         EventRow selected = eventsTable.getSelectionModel().getSelectedItem();
         if (selected == null) {
-            showAlert("Warning", "Please select an event to register");
+            showAlert("Warning", "Please select an event to buy tickets");
             return;
         }
 
-        if (selected.isRegistered) {
-            showAlert("Info", "You are already registered for this event!");
-            return;
-        }
+        try {
+            // Get available ticket templates for this event
+            List<Ticket> availableTickets = new ArrayList<>();
+            if (appContext.ticketRepo != null) {
+                try {
+                    List<Ticket> allTickets = appContext.ticketRepo.findAll();
+                    for (Ticket ticket : allTickets) {
+                        // Get templates (no attendeeId) for this event
+                        if (ticket.getAttendeeId() == null && ticket.getEventId().equals(selected.eventId)) {
+                            availableTickets.add(ticket);
+                        }
+                    }
+                } catch (Exception e) {
+                    System.err.println("Error loading available tickets: " + e.getMessage());
+                }
+            }
 
-        System.out.println("Register for event: " + selected.name);
-        // TODO: Implement actual event registration
-        showAlert("Success", " Successfully registered for event: " + selected.name);
+            if (availableTickets.isEmpty()) {
+                showAlert("Info", "No available tickets for this event yet");
+                return;
+            }
+
+            // Show ticket selection dialog
+            Dialog<ButtonType> dialog = new Dialog<>();
+            dialog.setTitle("Buy Ticket");
+            dialog.setHeaderText("Select ticket type for: " + selected.name);
+
+            VBox content = new VBox(10);
+            content.setPadding(new Insets(10));
+
+            Label infoLabel = new Label("Available Tickets:");
+            infoLabel.setStyle("-fx-font-weight: bold; -fx-font-size: 12;");
+
+            ComboBox<String> ticketCombo = new ComboBox<>();
+            List<String> ticketDisplay = new ArrayList<>();
+            Map<String, Ticket> ticketMap = new HashMap<>();
+
+            for (Ticket ticket : availableTickets) {
+                String display = ticket.getType().name() + " - $" + ticket.getPrice();
+                ticketDisplay.add(display);
+                ticketMap.put(display, ticket);
+            }
+
+            ticketCombo.setItems(FXCollections.observableArrayList(ticketDisplay));
+            ticketCombo.setValue(ticketDisplay.get(0));
+            ticketCombo.setPrefWidth(300);
+
+            content.getChildren().addAll(infoLabel, ticketCombo);
+            dialog.getDialogPane().setContent(content);
+            dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+
+            if (dialog.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
+                String selected_ticket = ticketCombo.getValue();
+                Ticket selectedTemplate = ticketMap.get(selected_ticket);
+
+                if (selectedTemplate != null) {
+                    // Create ticket for current attendee
+                    if (appContext.currentUser instanceof Attendee) {
+                        Attendee attendee = (Attendee) appContext.currentUser;
+
+                        Ticket newTicket = new Ticket();
+                        newTicket.setId(UUID.randomUUID());
+                        newTicket.setAttendeeId(attendee.getId());
+                        newTicket.setEventId(selectedTemplate.getEventId());
+                        newTicket.setSessionId(selectedTemplate.getSessionId());
+                        newTicket.setType(selectedTemplate.getType());
+                        newTicket.setPrice(selectedTemplate.getPrice());
+                        newTicket.setTicketStatus(TicketStatus.ACTIVE);
+                        newTicket.setPaymentStatus(PaymentStatus.PAID);
+
+                        // Generate QR code (simple simulation)
+                        String qrCode = "QR-" + newTicket.getId().toString().substring(0, 12).toUpperCase();
+                        newTicket.setQrCodeData(qrCode);
+
+                        if (appContext.ticketRepo != null) {
+                            try {
+                                appContext.ticketRepo.save(newTicket);
+
+                                // Show QR code dialog
+                                showQRCodeDialog(newTicket, selected.name);
+
+                                // Reload events to update registration status
+                                loadAllEvents();
+                            } catch (Exception e) {
+                                showAlert("Error", "Failed to purchase ticket: " + e.getMessage());
+                            }
+                        }
+                    }
+                }
+            }
+
+        } catch (Exception e) {
+            showAlert("Error", "Error buying ticket: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    private void showQRCodeDialog(Ticket ticket, String eventName) {
+        Dialog<Void> dialog = new Dialog<>();
+        dialog.setTitle("Ticket Purchase Confirmation");
+        dialog.setHeaderText("Successfully purchased ticket!");
+
+        VBox content = new VBox(15);
+        content.setPadding(new Insets(20));
+        content.setStyle("-fx-alignment: center;");
+
+        Label titleLabel = new Label("Event: " + eventName);
+        titleLabel.setStyle("-fx-font-size: 14; -fx-font-weight: bold;");
+
+        Label typeLabel = new Label("Ticket Type: " + ticket.getType().name());
+        typeLabel.setStyle("-fx-font-size: 12;");
+
+        Label priceLabel = new Label("Price: $" + ticket.getPrice());
+        priceLabel.setStyle("-fx-font-size: 12;");
+
+        Label qrTitleLabel = new Label("QR Code:");
+        qrTitleLabel.setStyle("-fx-font-size: 12; -fx-font-weight: bold;");
+
+        Label qrCodeLabel = new Label(ticket.getQrCodeData());
+        qrCodeLabel.setStyle("-fx-font-size: 16; -fx-font-weight: bold; -fx-text-fill: #2c3e50; " +
+                "-fx-border-color: #2c3e50; -fx-border-width: 2; -fx-padding: 15; " +
+                "-fx-background-color: #ecf0f1; -fx-border-radius: 5;");
+
+        Label ticketIdLabel = new Label("Ticket ID: " + ticket.getId().toString().substring(0, 8));
+        ticketIdLabel.setStyle("-fx-font-size: 10; -fx-text-fill: #666;");
+
+        content.getChildren().addAll(
+                titleLabel,
+                new Separator(),
+                typeLabel,
+                priceLabel,
+                qrTitleLabel,
+                qrCodeLabel,
+                ticketIdLabel,
+                new Separator(),
+                new Label("Show this QR code at the event entrance")
+        );
+
+        dialog.getDialogPane().setContent(content);
+        dialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
+        dialog.showAndWait();
     }
 
     @FXML
@@ -209,13 +375,35 @@ public class ViewEventsController {
             return;
         }
         System.out.println("View Sessions for event: " + selected.name);
-        // TODO: Implement view sessions page
-        showAlert("Info", "Sessions feature coming soon for: " + selected.name);
+
+        try {
+            if (appContext.sessionRepo != null) {
+                List<Session> sessions = appContext.sessionRepo.findByEvent(selected.eventId);
+
+                if (sessions.isEmpty()) {
+                    showAlert("Info", "No sessions found for this event");
+                    return;
+                }
+
+                StringBuilder sessionInfo = new StringBuilder("Sessions for " + selected.name + ":\n\n");
+                for (Session session : sessions) {
+                    sessionInfo.append("• ").append(session.getTitle()).append("\n");
+                    sessionInfo.append("  Time: ").append(session.getStart()).append(" - ").append(session.getEnd()).append("\n");
+                    sessionInfo.append("  Venue: ").append(session.getVenue()).append("\n");
+                    sessionInfo.append("  Capacity: ").append(session.getCapacity()).append("\n\n");
+                }
+
+                showAlert("Sessions", sessionInfo.toString());
+            }
+        } catch (Exception e) {
+            showAlert("Error", "Error loading sessions: " + e.getMessage());
+        }
     }
 
     @FXML
     public void onBack() {
-        SceneManager.switchTo("home.fxml", "Event Manager System - Home");
+        // Go back to Attendee Dashboard instead of Home
+        SceneManager.switchTo("dashboard.fxml", "Event Manager System - Dashboard");
     }
 
     private void showAlert(String title, String message) {
@@ -228,6 +416,7 @@ public class ViewEventsController {
 
     // Helper class for displaying event data in table
     public static class EventRow {
+        public UUID eventId;
         public String name;
         public String type;
         public String location;
@@ -237,8 +426,9 @@ public class ViewEventsController {
         public int sessionCount;
         public boolean isRegistered;
 
-        public EventRow(String name, String type, String location,
+        public EventRow(UUID eventId, String name, String type, String location,
                        String startDate, String endDate, String status, int sessionCount, boolean isRegistered) {
+            this.eventId = eventId;
             this.name = name;
             this.type = type;
             this.location = location;

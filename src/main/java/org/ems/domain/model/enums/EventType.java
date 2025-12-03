@@ -6,6 +6,7 @@ package org.ems.domain.model.enums;
 public enum EventType {
     CONFERENCE,
     WORKSHOP,
+    SEMINAR,
     CONCERT,
     EXHIBITION
 }

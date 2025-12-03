@@ -365,7 +365,21 @@ public class JdbcPresenterRepository implements PresenterRepository {
         p.setUsername(rs.getString("username"));
         p.setPasswordHash(rs.getString("password_hash"));
         p.setRole(Role.PRESENTER);
-        p.setPresenterType(PresenterType.valueOf(rs.getString("presenter_type")));
+
+        // Handle presenter_type - use role column if presenter_type is null
+        String presenterType = rs.getString("presenter_type");
+        if (presenterType == null || presenterType.isEmpty()) {
+            presenterType = rs.getString("role");
+        }
+        if (presenterType == null || presenterType.isEmpty()) {
+            presenterType = "Keynote Speaker"; // Default
+        }
+        try {
+            p.setPresenterType(PresenterType.valueOf(presenterType.toUpperCase().replace(" ", "_")));
+        } catch (IllegalArgumentException e) {
+            p.setPresenterType(PresenterType.valueOf("KEYNOTE_SPEAKER")); // Fallback
+        }
+
         p.setBio(rs.getString("bio"));
 
         return p;

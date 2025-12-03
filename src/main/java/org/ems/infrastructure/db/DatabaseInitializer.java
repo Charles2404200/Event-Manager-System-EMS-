@@ -28,15 +28,15 @@ public class DatabaseInitializer {
             }
             System.out.println(" Database schema initialized successfully.");
 
-            // Seed admin user and sample data
+            // Seed admin user only (no sample data)
             DataSeeder.seedAdminUser();
-            DataSeeder.seedSampleData();
+            // DataSeeder.seedSampleData(); // DISABLED - no more automatic data seeding
 
         } catch (Exception e) {
             if (e.getMessage() != null && e.getMessage().contains("already exists")) {
                 System.out.println("⚠ Database tables already exist, skipping initialization.");
                 DataSeeder.seedAdminUser();
-                DataSeeder.seedSampleData();
+                // DataSeeder.seedSampleData(); // DISABLED - no more automatic data seeding
             } else {
                 throw new RuntimeException(" Error initializing database: " + e.getMessage(), e);
             }

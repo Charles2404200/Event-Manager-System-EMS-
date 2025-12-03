@@ -25,7 +25,7 @@ public class JdbcTicketRepository implements TicketRepository {
 
         String sql = """
             INSERT INTO tickets
-            (id, attendee_id, event_id, session_id, type, price, payment_status, ticket_status, qr_data)
+            (id, attendee_id, event_id, session_id, type, price, payment_status, status, qr_code_data)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (id) DO UPDATE SET
                 attendee_id    = EXCLUDED.attendee_id,
@@ -34,8 +34,8 @@ public class JdbcTicketRepository implements TicketRepository {
                 type           = EXCLUDED.type,
                 price          = EXCLUDED.price,
                 payment_status = EXCLUDED.payment_status,
-                ticket_status  = EXCLUDED.ticket_status,
-                qr_data        = EXCLUDED.qr_data
+                status         = EXCLUDED.status,
+                qr_code_data   = EXCLUDED.qr_code_data
         """;
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -211,7 +211,7 @@ public class JdbcTicketRepository implements TicketRepository {
     public List<Ticket> findByStatus(TicketStatus status) {
 
         List<Ticket> list = new ArrayList<>();
-        String sql = "SELECT * FROM tickets WHERE ticket_status=?";
+        String sql = "SELECT * FROM tickets WHERE status=?";
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, status.name());
@@ -259,11 +259,49 @@ public class JdbcTicketRepository implements TicketRepository {
         t.setAttendeeId((UUID) rs.getObject("attendee_id"));
         t.setEventId((UUID) rs.getObject("event_id"));
         t.setSessionId((UUID) rs.getObject("session_id"));
-        t.setType(TicketType.valueOf(rs.getString("type")));
+
+        // Handle TicketType safely
+        try {
+            String typeStr = rs.getString("type");
+            if (typeStr != null) {
+                t.setType(TicketType.valueOf(typeStr.toUpperCase()));
+            } else {
+                t.setType(TicketType.GENERAL); // Default
+            }
+        } catch (IllegalArgumentException e) {
+            System.err.println("Unknown ticket type: " + rs.getString("type") + ", using GENERAL");
+            t.setType(TicketType.GENERAL); // Fallback
+        }
+
         t.setPrice(rs.getBigDecimal("price"));
-        t.setPaymentStatus(PaymentStatus.valueOf(rs.getString("payment_status")));
-        t.setTicketStatus(TicketStatus.valueOf(rs.getString("ticket_status")));
-        t.setQrCodeData(rs.getString("qr_data"));
+
+        // Handle PaymentStatus safely
+        try {
+            String paymentStr = rs.getString("payment_status");
+            if (paymentStr != null) {
+                t.setPaymentStatus(PaymentStatus.valueOf(paymentStr.toUpperCase()));
+            } else {
+                t.setPaymentStatus(PaymentStatus.UNPAID); // Default
+            }
+        } catch (IllegalArgumentException e) {
+            System.err.println("Unknown payment status: " + rs.getString("payment_status") + ", using UNPAID");
+            t.setPaymentStatus(PaymentStatus.UNPAID); // Fallback
+        }
+
+        // Handle TicketStatus safely
+        try {
+            String statusStr = rs.getString("status");
+            if (statusStr != null) {
+                t.setTicketStatus(TicketStatus.valueOf(statusStr.toUpperCase()));
+            } else {
+                t.setTicketStatus(TicketStatus.ACTIVE); // Default
+            }
+        } catch (IllegalArgumentException e) {
+            System.err.println("Unknown ticket status: " + rs.getString("status") + ", using ACTIVE");
+            t.setTicketStatus(TicketStatus.ACTIVE); // Fallback
+        }
+
+        t.setQrCodeData(rs.getString("qr_code_data"));
 
         return t;
     }

@@ -88,7 +88,19 @@ public class ManageEventsController {
             if (eventRepo != null) {
                 try {
                     List<Event> events = eventRepo.findAll();
+                    AppContext context = AppContext.get();
+
                     for (Event event : events) {
+                        // Load session count for this event
+                        int sessionCount = 0;
+                        if (context.sessionRepo != null) {
+                            try {
+                                sessionCount = context.sessionRepo.findByEvent(event.getId()).size();
+                            } catch (Exception e) {
+                                System.err.println("Error loading sessions for event " + event.getId() + ": " + e.getMessage());
+                            }
+                        }
+
                         allEvents.add(new EventRow(
                                 event.getId().toString(),
                                 event.getName(),
@@ -97,7 +109,7 @@ public class ManageEventsController {
                                 event.getStartDate() != null ? event.getStartDate().toString() : "N/A",
                                 event.getEndDate() != null ? event.getEndDate().toString() : "N/A",
                                 event.getStatus().name(),
-                                0  // TODO: Load session count from sessions table
+                                sessionCount  // Load actual session count from database
                         ));
                     }
                     System.out.println(" Loaded " + events.size() + " events");

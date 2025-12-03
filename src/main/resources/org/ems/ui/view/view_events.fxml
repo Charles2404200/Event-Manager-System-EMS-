@@ -43,7 +43,7 @@
             <!-- Action Buttons -->
             <HBox spacing="10" style="-fx-padding: 10;">
                 <Button text="📋 View Details" prefWidth="130" style="-fx-padding: 10; -fx-font-size: 12; -fx-cursor: hand;" onAction="#onViewDetails"/>
-                <Button text="📝 Register" prefWidth="100" style="-fx-padding: 10; -fx-font-size: 12; -fx-cursor: hand; -fx-text-fill: white; -fx-background-color: #27ae60;" onAction="#onRegister"/>
+                <Button text="🎫 Buy Ticket" prefWidth="130" style="-fx-padding: 10; -fx-font-size: 12; -fx-cursor: hand; -fx-text-fill: white; -fx-background-color: #27ae60;" onAction="#onBuyTicket"/>
                 <Button text="🔗 View Sessions" prefWidth="130" style="-fx-padding: 10; -fx-font-size: 12; -fx-cursor: hand;" onAction="#onViewSessions"/>
             </HBox>
 

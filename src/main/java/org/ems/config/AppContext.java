@@ -26,7 +26,7 @@ public class AppContext {
 
     private static AppContext instance;
 
-    private final Connection connection;
+    public final Connection connection;
 
     // Repositories
     public final EventRepository eventRepo;
