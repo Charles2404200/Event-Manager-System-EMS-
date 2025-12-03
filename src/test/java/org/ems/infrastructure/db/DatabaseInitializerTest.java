@@ -38,16 +38,19 @@ class DatabaseInitializerTest {
              Statement stmt = conn.createStatement()) {
             
             // Check persons table exists
-            ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM persons");
-            assertTrue(rs.next(), "Should be able to query persons table");
+            try (ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM persons")) {
+                assertTrue(rs.next(), "Should be able to query persons table");
+            }
             
             // Check events table exists
-            rs = stmt.executeQuery("SELECT COUNT(*) FROM events");
-            assertTrue(rs.next(), "Should be able to query events table");
+            try (ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM events")) {
+                assertTrue(rs.next(), "Should be able to query events table");
+            }
             
             // Check sessions table exists
-            rs = stmt.executeQuery("SELECT COUNT(*) FROM sessions");
-            assertTrue(rs.next(), "Should be able to query sessions table");
+            try (ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM sessions")) {
+                assertTrue(rs.next(), "Should be able to query sessions table");
+            }
         }
     }
 
@@ -58,10 +61,9 @@ class DatabaseInitializerTest {
         
         // When checking for admin user
         try (Connection conn = DatabaseConfig.getConnection();
-             Statement stmt = conn.createStatement()) {
-            
-            ResultSet rs = stmt.executeQuery(
-                "SELECT username, role FROM persons WHERE username = 'admin'");
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(
+                "SELECT username, role FROM persons WHERE username = 'admin'")) {
             
             // Then admin user should exist
             assertTrue(rs.next(), "Admin user should exist");

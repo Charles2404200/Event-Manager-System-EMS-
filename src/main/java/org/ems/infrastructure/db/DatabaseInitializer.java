@@ -6,9 +6,7 @@ package org.ems.infrastructure.db;
 
 import org.ems.config.DatabaseConfig;
 
-import java.io.BufferedReader;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.Statement;
@@ -25,10 +23,9 @@ public class DatabaseInitializer {
             try (InputStream in = DatabaseInitializer.class.getClassLoader()
                     .getResourceAsStream(schemaFile)) {
                 if (in == null) {
-                    throw new RuntimeException(" Schema file not found at /resources/" + schemaFile);
+                    throw new RuntimeException("⚠ Schema file not found at /resources/" + schemaFile);
                 }
-                String sql = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))
-                        .lines().collect(Collectors.joining("\n"));
+                String sql = new String(in.readAllBytes(), StandardCharsets.UTF_8);
                 
                 // Execute each statement separately for compatibility
                 try (Statement st = conn.createStatement()) {

@@ -13,8 +13,6 @@ public class DatabaseConfig {
     private static final String DB_PASSWORD = getEnvOrDefault("DB_PASSWORD", "");
     
     private static final boolean USE_H2 = DB_URL.startsWith("jdbc:h2:");
-    
-    private static boolean driverLoaded = false;
 
     static {
         loadDrivers();
@@ -33,7 +31,6 @@ public class DatabaseConfig {
         try {
             Class.forName("org.postgresql.Driver");
             System.out.println(" PostgreSQL driver loaded successfully");
-            driverLoaded = true;
         } catch (ClassNotFoundException e) {
             System.err.println(" PostgreSQL driver not found: " + e.getMessage());
         }
@@ -64,12 +61,5 @@ public class DatabaseConfig {
      */
     public static boolean isUsingH2() {
         return USE_H2;
-    }
-    
-    /**
-     * Returns true if PostgreSQL driver was successfully loaded
-     */
-    public static boolean isPostgresDriverLoaded() {
-        return driverLoaded;
     }
 }
