@@ -390,7 +390,34 @@ public class ViewEventsController {
                     sessionInfo.append("• ").append(session.getTitle()).append("\n");
                     sessionInfo.append("  Time: ").append(session.getStart()).append(" - ").append(session.getEnd()).append("\n");
                     sessionInfo.append("  Venue: ").append(session.getVenue()).append("\n");
-                    sessionInfo.append("  Capacity: ").append(session.getCapacity()).append("\n\n");
+                    sessionInfo.append("  Capacity: ").append(session.getCapacity()).append("\n");
+
+                    // Load and display presenter names
+                    if (appContext.presenterRepo != null && session.getPresenterIds() != null && !session.getPresenterIds().isEmpty()) {
+                        sessionInfo.append("  Presenters: ");
+                        List<String> presenterNames = new ArrayList<>();
+
+                        for (UUID presenterId : session.getPresenterIds()) {
+                            try {
+                                Presenter presenter = appContext.presenterRepo.findById(presenterId);
+                                if (presenter != null) {
+                                    presenterNames.add(presenter.getFullName() + " (" + presenter.getPresenterType().name() + ")");
+                                }
+                            } catch (Exception e) {
+                                System.err.println("Error loading presenter: " + e.getMessage());
+                            }
+                        }
+
+                        if (!presenterNames.isEmpty()) {
+                            sessionInfo.append(String.join(", ", presenterNames)).append("\n");
+                        } else {
+                            sessionInfo.append("No presenters assigned\n");
+                        }
+                    } else {
+                        sessionInfo.append("  Presenters: No presenters assigned\n");
+                    }
+
+                    sessionInfo.append("\n");
                 }
 
                 showAlert("Sessions", sessionInfo.toString());

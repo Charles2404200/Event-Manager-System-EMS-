@@ -217,6 +217,12 @@ public class AdminDashboardController {
     }
 
     @FXML
+    public void onManagePresenters() {
+        System.out.println("Manage Presenters clicked");
+        SceneManager.switchTo("presenter_manager.fxml", "Event Manager System - Manage Presenters");
+    }
+
+    @FXML
     public void onViewReports() {
         System.out.println("View Reports clicked");
         // TODO: Load reports page

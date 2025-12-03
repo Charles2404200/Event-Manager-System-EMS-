@@ -62,6 +62,26 @@
             <version>5.10.0</version>
             <scope>test</scope>
         </dependency>
+
+        <!-- HikariCP - Connection Pooling (Optional but Recommended) -->
+        <dependency>
+            <groupId>com.zaxxer</groupId>
+            <artifactId>HikariCP</artifactId>
+            <version>5.1.0</version>
+        </dependency>
+
+        <!-- SLF4J + Logback - Logging Framework (Optional) -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>2.0.10</version>
+        </dependency>
+
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <version>1.4.14</version>
+        </dependency>
     </dependencies>
 
     <build>
