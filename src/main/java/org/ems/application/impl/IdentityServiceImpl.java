@@ -1,15 +1,19 @@
 package org.ems.application.impl;
 
 import org.ems.application.service.IdentityService;
+import org.ems.config.AppContext;
 import org.ems.config.DatabaseConfig;
 import org.ems.domain.model.Attendee;
 import org.ems.domain.model.Person;
 import org.ems.domain.model.Presenter;
+import org.ems.domain.model.Session;
+import org.ems.domain.model.Event;
 import org.ems.domain.repository.AttendeeRepository;
 import org.ems.domain.repository.PresenterRepository;
+import org.ems.domain.dto.PresenterStatisticsDTO;
 
-import java.util.List;
-import java.util.UUID;
+import java.time.LocalDateTime;
+import java.util.*;
 
 /**
  * @author <your group number>
@@ -123,7 +127,7 @@ public class IdentityServiceImpl implements IdentityService {
         return null; // Login failed
     }
 
-    // ...existing code...
+    // PRESENTER
     @Override
     public Presenter createPresenter(Presenter p) {
         return presenterRepo.save(p);
@@ -175,5 +179,125 @@ public class IdentityServiceImpl implements IdentityService {
             return attendee;
         }
         return null;
+    }
+
+    // NEW: PRESENTER STATISTICS
+    @Override
+    public PresenterStatisticsDTO getPresenterStatistics(UUID presenterId) {
+        try {
+            AppContext ctx = AppContext.get();
+
+            // Get presenter
+            Presenter presenter = presenterRepo.findById(presenterId);
+            if (presenter == null) {
+                return new PresenterStatisticsDTO();
+            }
+
+            // Get all sessions for this presenter
+            List<Session> allSessions = ctx.sessionRepo.findAll();
+            List<Session> presenterSessions = new ArrayList<>();
+
+            for (Session session : allSessions) {
+                if (session.getPresenterIds() != null &&
+                        session.getPresenterIds().contains(presenterId)) {
+                    presenterSessions.add(session);
+                }
+            }
+
+            // 1. Number of sessions presented
+            int totalSessions = presenterSessions.size();
+
+            // 2. Session audience sizes (total and average)
+            int totalAudience = 0;
+            Map<String, Integer> sessionEngagement = new HashMap<>();
+
+            for (Session session : presenterSessions) {
+                // Count attendees for this session
+                int attendeeCount = countAttendeesForSession(session.getId());
+                totalAudience += attendeeCount;
+
+                // Store engagement data
+                String sessionName = session.getTitle() + " (" +
+                        session.getId().toString().substring(0, 8) + ")";
+                sessionEngagement.put(sessionName, attendeeCount);
+            }
+
+            double averageAudience = totalSessions > 0 ?
+                    (double) totalAudience / totalSessions : 0.0;
+
+            // 3. Event-type distribution
+            Map<String, Integer> eventTypeDistribution = new HashMap<>();
+
+            for (Session session : presenterSessions) {
+                if (session.getEventId() != null && ctx.eventRepo != null) {
+                    Event event = ctx.eventRepo.findById(session.getEventId());
+                    if (event != null) {
+                        String eventType = event.getType().name();
+                        eventTypeDistribution.put(eventType,
+                                eventTypeDistribution.getOrDefault(eventType, 0) + 1);
+                    }
+                }
+            }
+
+            // 4. Session engagement trends (upcoming vs completed)
+            int upcomingSessions = 0;
+            int completedSessions = 0;
+            LocalDateTime now = LocalDateTime.now();
+
+            for (Session session : presenterSessions) {
+                if (session.getStart() != null) {
+                    if (session.getStart().isAfter(now)) {
+                        upcomingSessions++;
+                    } else if (session.getEnd() != null && session.getEnd().isBefore(now)) {
+                        completedSessions++;
+                    }
+                }
+            }
+
+            return new PresenterStatisticsDTO(
+                    totalSessions,
+                    totalAudience,
+                    averageAudience,
+                    eventTypeDistribution,
+                    sessionEngagement,
+                    upcomingSessions,
+                    completedSessions
+            );
+
+        } catch (Exception e) {
+            System.err.println("Error calculating presenter statistics: " + e.getMessage());
+            e.printStackTrace();
+            return new PresenterStatisticsDTO();
+        }
+    }
+
+    /**
+     * Count number of attendees registered for a specific session
+     */
+    private int countAttendeesForSession(UUID sessionId) {
+        try {
+            AppContext ctx = AppContext.get();
+
+            if (ctx.ticketRepo == null) {
+                return 0;
+            }
+
+            // Count tickets for this session
+            List<org.ems.domain.model.Ticket> tickets = ctx.ticketRepo.findBySession(sessionId);
+
+            // Count unique attendees
+            Set<UUID> uniqueAttendees = new HashSet<>();
+            for (org.ems.domain.model.Ticket ticket : tickets) {
+                if (ticket.getAttendeeId() != null) {
+                    uniqueAttendees.add(ticket.getAttendeeId());
+                }
+            }
+
+            return uniqueAttendees.size();
+
+        } catch (Exception e) {
+            System.err.println("Error counting attendees: " + e.getMessage());
+            return 0;
+        }
     }
 }

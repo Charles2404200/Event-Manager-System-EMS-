@@ -9,6 +9,8 @@ import java.util.List;
 import org.ems.domain.model.Person;
 import org.ems.domain.model.Attendee;
 import org.ems.domain.model.Presenter;
+import org.ems.domain.dto.PresenterStatisticsDTO;
+
 public interface IdentityService {
 
     // Attendee
@@ -16,6 +18,7 @@ public interface IdentityService {
     Attendee updateAttendee(Attendee a);
     Attendee getAttendee(UUID id);
     boolean deleteAttendee(UUID id);
+
     // Authentication
     Person login(String email, String password);
 
@@ -28,4 +31,6 @@ public interface IdentityService {
     List<Attendee> getAllAttendees();
     Person getUserById(UUID id);
 
+    // NEW: Presenter Statistics
+    PresenterStatisticsDTO getPresenterStatistics(UUID presenterId);
 }

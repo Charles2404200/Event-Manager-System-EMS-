@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?import javafx.scene.layout.BorderPane?>
+<?import javafx.scene.layout.VBox?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.control.ProgressIndicator?>
+<?import javafx.geometry.Insets?>
+
+<BorderPane xmlns="http://javafx.com/javafx"
+            xmlns:fx="http://javafx.com/fxml"
+            fx:controller="org.ems.ui.controller.PresenterStatisticsController"
+            prefWidth="1200" prefHeight="900">
+
+    <top>
+        <VBox style="-fx-background-color: #2c3e50; -fx-padding: 20;" spacing="10">
+            <Label fx:id="presenterNameLabel" text="Presenter Statistics"
+                   style="-fx-font-size: 24; -fx-font-weight: bold; -fx-text-fill: white;"/>
+            <Label text="View your session statistics, audience engagement, and performance metrics"
+                   style="-fx-font-size: 12; -fx-text-fill: #ecf0f1;"/>
+        </VBox>
+    </top>
+
+    <center>
+        <ScrollPane fitToWidth="true" style="-fx-background-color: #f5f5f5;">
+            <VBox spacing="20" style="-fx-padding: 30;">
+
+                <!-- Loading Indicator -->
+                <ProgressIndicator fx:id="loadingIndicator" visible="false"
+                                   style="-fx-max-width: 100; -fx-max-height: 100;"/>
+
+                <!-- Main Content -->
+                <VBox fx:id="contentBox" spacing="20">
+
+                    <!-- Quick Stats Cards -->
+                    <VBox spacing="15">
+                        <Label text="📊 Overview Statistics"
+                               style="-fx-font-size: 18; -fx-font-weight: bold; -fx-text-fill: #2c3e50;"/>
+
+                        <HBox spacing="15">
+                            <!-- Total Sessions -->
+                            <VBox style="-fx-border-color: #3498db; -fx-border-width: 2; -fx-padding: 20; -fx-border-radius: 8; -fx-background-color: white; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.1), 10, 0, 0, 5);"
+                                  spacing="10" prefWidth="220" alignment="CENTER">
+                                <Label text="📅 Total Sessions"
+                                       style="-fx-font-size: 12; -fx-text-fill: #666; -fx-font-weight: bold;"/>
+                                <Label fx:id="totalSessionsLabel" text="0"
+                                       style="-fx-font-size: 42; -fx-font-weight: bold; -fx-text-fill: #3498db;"/>
+                            </VBox>
+
+                            <!-- Total Audience -->
+                            <VBox style="-fx-border-color: #2ecc71; -fx-border-width: 2; -fx-padding: 20; -fx-border-radius: 8; -fx-background-color: white; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.1), 10, 0, 0, 5);"
+                                  spacing="10" prefWidth="220" alignment="CENTER">
+                                <Label text="👥 Total Audience"
+                                       style="-fx-font-size: 12; -fx-text-fill: #666; -fx-font-weight: bold;"/>
+                                <Label fx:id="totalAudienceLabel" text="0"
+                                       style="-fx-font-size: 42; -fx-font-weight: bold; -fx-text-fill: #2ecc71;"/>
+                            </VBox>
+
+                            <!-- Average Audience -->
+                            <VBox style="-fx-border-color: #f39c12; -fx-border-width: 2; -fx-padding: 20; -fx-border-radius: 8; -fx-background-color: white; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.1), 10, 0, 0, 5);"
+                                  spacing="10" prefWidth="220" alignment="CENTER">
+                                <Label text="📈 Avg per Session"
+                                       style="-fx-font-size: 12; -fx-text-fill: #666; -fx-font-weight: bold;"/>
+                                <Label fx:id="averageAudienceLabel" text="0.0"
+                                       style="-fx-font-size: 42; -fx-font-weight: bold; -fx-text-fill: #f39c12;"/>
+                            </VBox>
+
+                            <!-- Upcoming Sessions -->
+                            <VBox style="-fx-border-color: #9b59b6; -fx-border-width: 2; -fx-padding: 20; -fx-border-radius: 8; -fx-background-color: white; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.1), 10, 0, 0, 5);"
+                                  spacing="10" prefWidth="220" alignment="CENTER">
+                                <Label text="⏰ Upcoming"
+                                       style="-fx-font-size: 12; -fx-text-fill: #666; -fx-font-weight: bold;"/>
+                                <Label fx:id="upcomingSessionsLabel" text="0"
+                                       style="-fx-font-size: 42; -fx-font-weight: bold; -fx-text-fill: #9b59b6;"/>
+                            </VBox>
+
+                            <!-- Completed Sessions -->
+                            <VBox style="-fx-border-color: #95a5a6; -fx-border-width: 2; -fx-padding: 20; -fx-border-radius: 8; -fx-background-color: white; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.1), 10, 0, 0, 5);"
+                                  spacing="10" prefWidth="220" alignment="CENTER">
+                                <Label text="✅ Completed"
+                                       style="-fx-font-size: 12; -fx-text-fill: #666; -fx-font-weight: bold;"/>
+                                <Label fx:id="completedSessionsLabel" text="0"
+                                       style="-fx-font-size: 42; -fx-font-weight: bold; -fx-text-fill: #95a5a6;"/>
+                            </VBox>
+                        </HBox>
+                    </VBox>
+
+                    <!-- Event Type Distribution -->
+                    <VBox spacing="15" style="-fx-border-color: #ddd; -fx-border-width: 1; -fx-padding: 20; -fx-border-radius: 8; -fx-background-color: white; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.1), 10, 0, 0, 5);">
+                        <Label text="🎯 Event Type Distribution"
+                               style="-fx-font-size: 16; -fx-font-weight: bold; -fx-text-fill: #2c3e50;"/>
+                        <Label text="Number of sessions presented by event type"
+                               style="-fx-font-size: 12; -fx-text-fill: #999;"/>
+
+                        <VBox fx:id="eventTypeBox" spacing="10" style="-fx-padding: 10 0 0 0;">
+                            <!-- Dynamic content will be added here -->
+                        </VBox>
+                    </VBox>
+
+                    <!-- Session Engagement Trends -->
+                    <VBox spacing="15" style="-fx-border-color: #ddd; -fx-border-width: 1; -fx-padding: 20; -fx-border-radius: 8; -fx-background-color: white; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.1), 10, 0, 0, 5);">
+                        <Label text="📊 Session Engagement Trends"
+                               style="-fx-font-size: 16; -fx-font-weight: bold; -fx-text-fill: #2c3e50;"/>
+                        <Label text="Audience size per session (Top 10 sessions by attendance)"
+                               style="-fx-font-size: 12; -fx-text-fill: #999;"/>
+
+                        <ScrollPane fitToWidth="true" prefHeight="300" style="-fx-background-color: transparent;">
+                            <VBox fx:id="sessionEngagementBox" spacing="10" style="-fx-padding: 10 0 0 0;">
+                                <!-- Dynamic content will be added here -->
+                            </VBox>
+                        </ScrollPane>
+                    </VBox>
+
+                </VBox>
+
+                <!-- Action Buttons -->
+                <HBox spacing="15" style="-fx-padding: 20 0 0 0;">
+                    <Button text="🔄 Refresh Statistics" prefWidth="180" prefHeight="45"
+                            style="-fx-padding: 12; -fx-font-size: 13; -fx-cursor: hand; -fx-background-color: #3498db; -fx-text-fill: white; -fx-border-radius: 5; -fx-font-weight: bold;"
+                            onAction="#onRefresh"/>
+                    <Button text="📤 Export Summary" prefWidth="180" prefHeight="45"
+                            style="-fx-padding: 12; -fx-font-size: 13; -fx-cursor: hand; -fx-background-color: #2ecc71; -fx-text-fill: white; -fx-border-radius: 5; -fx-font-weight: bold;"
+                            onAction="#onExport"/>
+                    <Button text="← Back to Dashboard" prefWidth="180" prefHeight="45"
+                            style="-fx-padding: 12; -fx-font-size: 13; -fx-cursor: hand; -fx-background-color: #95a5a6; -fx-text-fill: white; -fx-border-radius: 5; -fx-font-weight: bold;"
+                            onAction="#onBack"/>
+                </HBox>
+
+            </VBox>
+        </ScrollPane>
+    </center>
+
+</BorderPane>
