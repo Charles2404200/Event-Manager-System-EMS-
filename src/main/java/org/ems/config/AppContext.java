@@ -108,5 +108,43 @@ public class AppContext {
         ) : null;
 
         System.out.println(" AppContext initialized successfully.");
+
+        // Register shutdown hook for graceful connection pool closure
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            System.out.println(" Shutting down AppContext...");
+            shutdown();
+        }));
+    }
+
+    // ============================================================
+    //  Shutdown
+    // ============================================================
+    /**
+     * Gracefully shutdown the application and close connection pool
+     */
+    public void shutdown() {
+        try {
+            if (connection != null && !connection.isClosed()) {
+                connection.close();
+                System.out.println(" Database connection closed");
+            }
+        } catch (Exception e) {
+            System.err.println(" Error closing connection: " + e.getMessage());
+        }
+
+        // Close HikariCP connection pool
+        DatabaseConfig.closePool();
+        System.out.println(" AppContext shutdown completed");
+    }
+
+    // ============================================================
+    //  Connection Pool Monitoring
+    // ============================================================
+    /**
+     * Get current HikariCP connection pool statistics
+     * @return Pool stats as formatted string
+     */
+    public String getPoolStats() {
+        return DatabaseConfig.getPoolStats();
     }
 }

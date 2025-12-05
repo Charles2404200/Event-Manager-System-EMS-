@@ -18,4 +18,10 @@ public interface UserRepository {
     void delete(UUID id);
 
     boolean existsByUsername(String username);
+
+    /**
+     * Returns total number of users.
+     * Implemented efficiently in JDBC layer using SELECT COUNT(*).
+     */
+    long count();
 }

@@ -1,6 +1,8 @@
 package org.ems.ui.controller;
 
 import javafx.collections.FXCollections;
+import javafx.collections.ObservableList;
+import javafx.concurrent.Task;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
 import javafx.scene.layout.GridPane;
@@ -10,12 +12,17 @@ import org.ems.domain.model.Event;
 import org.ems.domain.model.Presenter;
 import org.ems.domain.model.Session;
 import org.ems.config.AppContext;
+import org.ems.domain.repository.SessionRepository;
 import org.ems.ui.stage.SceneManager;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * SessionManagerController - Manages session CRUD operations
@@ -39,22 +46,56 @@ public class SessionManagerController {
     @FXML private Label detailVenueLabel;
     @FXML private Label detailCapacityLabel;
     @FXML private ListView<String> presenterListView;
+    @FXML private Label sessionCountLabel;
+    @FXML private Label pageInfoLabel;
 
     private final EventService eventService = AppContext.get().eventService;
     private final IdentityService identityService = AppContext.get().identityService;
+    private final SessionRepository sessionRepository = AppContext.get().sessionRepo;
+
     private Session selectedSession;
     private final DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
+
+    // Pagination state
+    private static final int PAGE_SIZE = 20;
+    private int currentPage = 0;
+    private int totalPages = 1;
+
+    private Map<UUID, Presenter> presenterCache;
+    private List<Event> eventCache;
 
     @FXML
     public void initialize() {
         setupTableColumns();
-        loadSessions();
+        initPagination();
+        preloadEvents();
+        preloadPresenters();
+        loadSessionsAsync();
+
         sessionTable.getSelectionModel().selectedItemProperty().addListener((obs, oldVal, newVal) -> {
             if (newVal != null) {
                 selectedSession = newVal;
                 displaySessionDetails(newVal);
             }
         });
+    }
+
+    private void initPagination() {
+        try {
+            if (sessionRepository != null) {
+                long totalSessions = sessionRepository.count();
+                totalPages = Math.max(1, (int) Math.ceil(totalSessions / (double) PAGE_SIZE));
+            }
+        } catch (Exception ignored) {
+            totalPages = 1;
+        }
+        updatePageInfo();
+    }
+
+    private void updatePageInfo() {
+        if (pageInfoLabel != null) {
+            pageInfoLabel.setText("Page " + (currentPage + 1) + " / " + totalPages);
+        }
     }
 
     private void setupTableColumns() {
@@ -66,13 +107,10 @@ public class SessionManagerController {
                 new javafx.beans.property.SimpleStringProperty(
                         data.getValue().getTitle()
                 ));
-        colEvent.setCellValueFactory(data -> {
-            UUID eventId = data.getValue().getEventId();
-            Event event = eventService.getEvent(eventId);
-            return new javafx.beans.property.SimpleStringProperty(
-                    event != null ? event.getName() : "N/A"
-            );
-        });
+
+        // colEvent: set rỗng; sẽ được set lại sau khi đã có cache tên event trong loadSessionsAsync
+        colEvent.setCellValueFactory(data -> new javafx.beans.property.SimpleStringProperty(""));
+
         colStart.setCellValueFactory(data ->
                 new javafx.beans.property.SimpleStringProperty(
                         data.getValue().getStart().format(formatter)
@@ -87,41 +125,81 @@ public class SessionManagerController {
                 ).asObject());
     }
 
-    private void loadSessions() {
-        try {
-            List<Session> sessions = eventService.getSessions();
-            sessionTable.setItems(FXCollections.observableList(sessions));
-        } catch (Exception e) {
-            showError("Error loading sessions", e.getMessage());
+    // Async load sessions + dùng findPage để phân trang ở DB
+    private void loadSessionsAsync() {
+        Task<ObservableList<Session>> task = new Task<>() {
+            @Override
+            protected ObservableList<Session> call() {
+                try {
+                    if (sessionRepository != null) {
+                        int offset = currentPage * PAGE_SIZE;
+                        List<Session> page = sessionRepository.findPage(offset, PAGE_SIZE);
+                        return FXCollections.observableArrayList(page);
+                    } else {
+                        List<Session> sessions = eventService.getSessions();
+                        return FXCollections.observableArrayList(sessions);
+                    }
+                } catch (Exception e) {
+                    return FXCollections.observableArrayList();
+                }
+            }
+        };
+
+        task.setOnSucceeded(evt -> {
+            ObservableList<Session> sessions = task.getValue();
+            sessionTable.setItems(sessions);
+            if (sessionCountLabel != null) {
+                sessionCountLabel.setText("Total Sessions: " + sessions.size());
+            }
+
+            // Sau khi set items, build map eventId->name và gán cho từng row để tránh N+1
+            try {
+                Map<UUID, String> eventNameMap = new HashMap<>();
+                for (Event e : eventCache) {
+                    eventNameMap.put(e.getId(), e.getName());
+                }
+                colEvent.setCellValueFactory(data -> {
+                    UUID eventId = data.getValue().getEventId();
+                    String name = eventNameMap.getOrDefault(eventId, "N/A");
+                    return new javafx.beans.property.SimpleStringProperty(name);
+                });
+            } catch (Exception ignored) { }
+        });
+
+        task.setOnFailed(evt -> {
+            Throwable ex = task.getException();
+            showError("Error loading sessions", ex != null ? ex.getMessage() : "Unknown error");
+        });
+
+        Thread t = new Thread(task, "session-manager-loader");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    @FXML
+    public void onPrevPage() {
+        if (currentPage > 0) {
+            currentPage--;
+            updatePageInfo();
+            loadSessionsAsync();
         }
     }
 
-    private void displaySessionDetails(Session session) {
-        try {
-            detailIdLabel.setText(session.getId().toString());
-            detailTitleLabel.setText(session.getTitle());
-            detailDescLabel.setText(session.getDescription() != null ? session.getDescription() : "No description");
-            detailStartLabel.setText(session.getStart().format(formatter));
-            detailEndLabel.setText(session.getEnd().format(formatter));
-            detailVenueLabel.setText(session.getVenue());
-            detailCapacityLabel.setText(String.valueOf(session.getCapacity()));
-
-            // Load presenters
-            List<String> presenterNames = session.getPresenterIds().stream()
-                    .map(pid -> {
-                        Presenter p = (Presenter) identityService.getUserById(pid);
-                        return p != null ? p.getFullName() : "Unknown";
-                    })
-                    .toList();
-            presenterListView.setItems(FXCollections.observableList(presenterNames));
-        } catch (Exception e) {
-            showError("Error loading details", e.getMessage());
+    @FXML
+    public void onNextPage() {
+        if (currentPage + 1 < totalPages) {
+            currentPage++;
+            updatePageInfo();
+            loadSessionsAsync();
         }
     }
 
     @FXML
     public void onRefresh() {
-        loadSessions();
+        initPagination();
+        preloadEvents();
+        preloadPresenters();
+        loadSessionsAsync();
         selectedSession = null;
         clearDetails();
     }
@@ -135,6 +213,55 @@ public class SessionManagerController {
         detailVenueLabel.setText("-");
         detailCapacityLabel.setText("-");
         presenterListView.setItems(FXCollections.observableList(List.of()));
+    }
+
+    private void preloadEvents() {
+        try {
+            eventCache = eventService.getEvents();
+        } catch (Exception e) {
+            eventCache = new ArrayList<>();
+        }
+    }
+
+    private void preloadPresenters() {
+        try {
+            List<Presenter> allPresenters = identityService.getAllPresenters();
+            presenterCache = allPresenters.stream()
+                    .collect(Collectors.toMap(Presenter::getId, p -> p));
+        } catch (Exception e) {
+            presenterCache = new HashMap<>();
+        }
+    }
+
+    private void displaySessionDetails(Session session) {
+        try {
+            detailIdLabel.setText(session.getId().toString());
+            detailTitleLabel.setText(session.getTitle());
+            detailDescLabel.setText(session.getDescription() != null ? session.getDescription() : "No description");
+            detailStartLabel.setText(session.getStart().format(formatter));
+            detailEndLabel.setText(session.getEnd().format(formatter));
+            detailVenueLabel.setText(session.getVenue());
+            detailCapacityLabel.setText(String.valueOf(session.getCapacity()));
+
+            List<UUID> presenterIds = session.getPresenterIds();
+            List<String> presenterNames = FXCollections.observableArrayList();
+
+            for (UUID pid : presenterIds) {
+                Presenter p = presenterCache != null ? presenterCache.get(pid) : null;
+                if (p == null) {
+                    // fallback: nếu cache chưa có thì gọi 1 lần rồi cache thêm, tránh N+1 lặp lại
+                    p = (Presenter) identityService.getUserById(pid);
+                    if (p != null) {
+                        if (presenterCache == null) presenterCache = new HashMap<>();
+                        presenterCache.put(pid, p);
+                    }
+                }
+                presenterNames.add(p != null ? p.getFullName() : "Unknown");
+            }
+            presenterListView.setItems(FXCollections.observableList(presenterNames));
+        } catch (Exception e) {
+            showError("Error loading details", e.getMessage());
+        }
     }
 
     @FXML
@@ -169,7 +296,11 @@ public class SessionManagerController {
 
         Label eventLabel = new Label("Event:");
         ComboBox<Event> eventBox = new ComboBox<>();
-        eventBox.getItems().addAll(eventService.getEvents());
+        // dùng eventCache thay vì gọi eventService.getEvents() mỗi lần
+        if (eventCache == null || eventCache.isEmpty()) {
+            preloadEvents();
+        }
+        eventBox.getItems().addAll(eventCache);
         eventBox.setCellFactory(cb -> new ListCell<>() {
             @Override
             protected void updateItem(Event e, boolean empty) {
@@ -248,7 +379,7 @@ public class SessionManagerController {
             try {
                 eventService.createSession(s);
                 showInfo("Success", "Session created successfully!");
-                loadSessions();
+                loadSessionsAsync();
             } catch (Exception e) {
                 showError("Creation Error", e.getMessage());
             }
@@ -290,8 +421,17 @@ public class SessionManagerController {
 
         Label eventLabel = new Label("Event:");
         ComboBox<Event> eventBox = new ComboBox<>();
-        eventBox.getItems().addAll(eventService.getEvents());
-        eventBox.setValue(eventService.getEvent(selectedSession.getEventId()));
+        if (eventCache == null || eventCache.isEmpty()) {
+            preloadEvents();
+        }
+        eventBox.getItems().addAll(eventCache);
+        // đặt value hiện tại
+        for (Event ev : eventCache) {
+            if (ev.getId().equals(selectedSession.getEventId())) {
+                eventBox.setValue(ev);
+                break;
+            }
+        }
         eventBox.setCellFactory(cb -> new ListCell<>() {
             @Override
             protected void updateItem(Event e, boolean empty) {
@@ -365,7 +505,7 @@ public class SessionManagerController {
             try {
                 eventService.updateSession(s);
                 showInfo("Success", "Session updated successfully!");
-                loadSessions();
+                loadSessionsAsync();
             } catch (Exception e) {
                 showError("Update Error", e.getMessage());
             }
@@ -388,7 +528,7 @@ public class SessionManagerController {
             try {
                 eventService.deleteSession(selectedSession.getId());
                 showInfo("Success", "Session deleted successfully!");
-                loadSessions();
+                loadSessionsAsync();
                 clearDetails();
                 selectedSession = null;
             } catch (Exception e) {
@@ -410,7 +550,15 @@ public class SessionManagerController {
 
         Label presenterLabel = new Label("Presenter:");
         ComboBox<Presenter> presenterBox = new ComboBox<>();
-        List<Presenter> presenters = identityService.getAllPresenters();
+        // dùng cache thay vì identityService.getAllPresenters mỗi lần
+        List<Presenter> presenters;
+        if (presenterCache != null && !presenterCache.isEmpty()) {
+            presenters = new ArrayList<>(presenterCache.values());
+        } else {
+            presenters = identityService.getAllPresenters();
+            presenterCache = presenters.stream()
+                    .collect(Collectors.toMap(Presenter::getId, p -> p));
+        }
         presenterBox.getItems().addAll(presenters);
         presenterBox.setCellFactory(cb -> new ListCell<>() {
             @Override

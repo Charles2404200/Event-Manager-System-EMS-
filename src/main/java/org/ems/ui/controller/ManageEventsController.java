@@ -2,6 +2,7 @@ package org.ems.ui.controller;
 
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
+import javafx.concurrent.Task;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
 import javafx.scene.layout.VBox;
@@ -11,16 +12,15 @@ import org.ems.domain.model.Event;
 import org.ems.domain.model.enums.EventType;
 import org.ems.domain.model.enums.EventStatus;
 import org.ems.domain.repository.EventRepository;
+import org.ems.infrastructure.repository.jdbc.JdbcEventRepository;
 import org.ems.ui.stage.SceneManager;
 
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
 
-/**
- * @author <your group number>
- */
 public class ManageEventsController {
 
     @FXML private TextField searchField;
@@ -34,97 +34,133 @@ public class ManageEventsController {
     @FXML
     public void initialize() {
         try {
-            // Get repository from context
             AppContext context = AppContext.get();
             eventRepo = context.eventRepo;
 
-            // Setup type filter combo
             typeFilterCombo.setItems(FXCollections.observableArrayList(
                     "ALL", "CONFERENCE", "WORKSHOP", "CONCERT", "EXHIBITION", "SEMINAR"
             ));
             typeFilterCombo.setValue("ALL");
 
-            // Setup table columns
             setupTableColumns();
 
-            // Load all events
-            loadAllEvents();
+            // Load events bất đồng bộ để không block UI
+            loadAllEventsAsync();
 
         } catch (Exception e) {
             showAlert("Error", "Failed to initialize: " + e.getMessage());
-            System.err.println("Initialize error: " + e.getMessage());
             e.printStackTrace(System.err);
         }
     }
 
     private void setupTableColumns() {
         ObservableList<TableColumn<EventRow, ?>> columns = eventsTable.getColumns();
-
         if (columns.size() >= 8) {
             ((TableColumn<EventRow, String>) columns.get(0)).setCellValueFactory(cellData ->
-                new javafx.beans.property.SimpleStringProperty(cellData.getValue().id));
+                    new javafx.beans.property.SimpleStringProperty(cellData.getValue().id));
             ((TableColumn<EventRow, String>) columns.get(1)).setCellValueFactory(cellData ->
-                new javafx.beans.property.SimpleStringProperty(cellData.getValue().name));
+                    new javafx.beans.property.SimpleStringProperty(cellData.getValue().name));
             ((TableColumn<EventRow, String>) columns.get(2)).setCellValueFactory(cellData ->
-                new javafx.beans.property.SimpleStringProperty(cellData.getValue().type));
+                    new javafx.beans.property.SimpleStringProperty(cellData.getValue().type));
             ((TableColumn<EventRow, String>) columns.get(3)).setCellValueFactory(cellData ->
-                new javafx.beans.property.SimpleStringProperty(cellData.getValue().location));
+                    new javafx.beans.property.SimpleStringProperty(cellData.getValue().location));
             ((TableColumn<EventRow, String>) columns.get(4)).setCellValueFactory(cellData ->
-                new javafx.beans.property.SimpleStringProperty(cellData.getValue().startDate));
+                    new javafx.beans.property.SimpleStringProperty(cellData.getValue().startDate));
             ((TableColumn<EventRow, String>) columns.get(5)).setCellValueFactory(cellData ->
-                new javafx.beans.property.SimpleStringProperty(cellData.getValue().endDate));
+                    new javafx.beans.property.SimpleStringProperty(cellData.getValue().endDate));
             ((TableColumn<EventRow, String>) columns.get(6)).setCellValueFactory(cellData ->
-                new javafx.beans.property.SimpleStringProperty(cellData.getValue().status));
+                    new javafx.beans.property.SimpleStringProperty(cellData.getValue().status));
             ((TableColumn<EventRow, String>) columns.get(7)).setCellValueFactory(cellData ->
-                new javafx.beans.property.SimpleStringProperty(String.valueOf(cellData.getValue().sessionCount)));
+                    new javafx.beans.property.SimpleStringProperty(String.valueOf(cellData.getValue().sessionCount)));
         }
     }
 
-    private void loadAllEvents() {
+    /**
+     * Bản tối ưu: load events trên background thread, dùng JOIN/COUNT để đếm session
+     * tránh N+1 query cực chậm khi số event lớn.
+     */
+    private void loadAllEventsAsync() {
+        Task<List<EventRow>> task = new Task<>() {
+            @Override
+            protected List<EventRow> call() {
+                return loadAllEventsOptimized();
+            }
+        };
+
+        task.setOnSucceeded(evt -> {
+            allEvents = task.getValue();
+            displayEvents(allEvents);
+        });
+
+        task.setOnFailed(evt -> {
+            Throwable ex = task.getException();
+            showAlert("Error", "Failed to load events: " + (ex != null ? ex.getMessage() : "unknown error"));
+            ex.printStackTrace(System.err);
+        });
+
+        Thread t = new Thread(task, "manage-events-loader");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /**
+     * Thực tế logic load, chạy trong background thread.
+     * - Nếu có JdbcEventRepository: dùng findAllOptimized() đã JOIN sessions
+     * - Nếu không: dùng findAll() + một query COUNT(*) nhóm theo event_id để đếm session
+     */
+    private List<EventRow> loadAllEventsOptimized() {
+        List<EventRow> rows = new ArrayList<>();
         try {
-            allEvents = new ArrayList<>();
+            if (eventRepo == null) {
+                return rows;
+            }
 
-            // Load events from repository
-            if (eventRepo != null) {
-                try {
-                    List<Event> events = eventRepo.findAll();
-                    AppContext context = AppContext.get();
+            AppContext context = AppContext.get();
+            Map<UUID, Integer> sessionCounts = new HashMap<>();
 
-                    for (Event event : events) {
-                        // Load session count for this event
-                        int sessionCount = 0;
-                        if (context.sessionRepo != null) {
-                            try {
-                                sessionCount = context.sessionRepo.findByEvent(event.getId()).size();
-                            } catch (Exception e) {
-                                System.err.println("Error loading sessions for event " + event.getId() + ": " + e.getMessage());
-                            }
-                        }
-
-                        allEvents.add(new EventRow(
-                                event.getId().toString(),
-                                event.getName(),
-                                event.getType().name(),
-                                event.getLocation(),
-                                event.getStartDate() != null ? event.getStartDate().toString() : "N/A",
-                                event.getEndDate() != null ? event.getEndDate().toString() : "N/A",
-                                event.getStatus().name(),
-                                sessionCount  // Load actual session count from database
-                        ));
+            // Đếm session theo event chỉ với 1 query COUNT(*) GROUP BY event_id
+            if (context.connection != null) {
+                String sql = "SELECT event_id, COUNT(*) AS cnt FROM sessions GROUP BY event_id";
+                try (PreparedStatement ps = context.connection.prepareStatement(sql);
+                     ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        UUID eventId = (UUID) rs.getObject("event_id");
+                        int cnt = rs.getInt("cnt");
+                        sessionCounts.put(eventId, cnt);
                     }
-                    System.out.println(" Loaded " + events.size() + " events");
-                } catch (Exception e) {
-                    System.err.println("Error loading events: " + e.getMessage());
                 }
             }
 
-            displayEvents(allEvents);
-            System.out.println(" Total events loaded: " + allEvents.size());
+            List<Event> events;
+            if (eventRepo instanceof JdbcEventRepository jdbcRepo) {
+                // Dùng bản join tối ưu sẵn nếu có
+                events = jdbcRepo.findAllOptimized();
+            } else {
+                events = eventRepo.findAll();
+            }
+
+            for (Event event : events) {
+                int sessionCount = sessionCounts.getOrDefault(event.getId(), 0);
+
+                rows.add(new EventRow(
+                        event.getId().toString(),
+                        event.getName(),
+                        event.getType().name(),
+                        event.getLocation(),
+                        event.getStartDate() != null ? event.getStartDate().toString() : "N/A",
+                        event.getEndDate() != null ? event.getEndDate().toString() : "N/A",
+                        event.getStatus().name(),
+                        sessionCount
+                ));
+            }
+
+            System.out.println("[ManageEvents] Loaded " + events.size() + " events (optimized)");
+            return rows;
 
         } catch (Exception e) {
-            showAlert("Error", "Failed to load events: " + e.getMessage());
-            System.err.println("Load events error: " + e.getMessage());
+            System.err.println("Load events error (optimized): " + e.getMessage());
             e.printStackTrace(System.err);
+            return rows;
         }
     }
 
@@ -143,15 +179,12 @@ public class ManageEventsController {
             List<EventRow> filtered = new ArrayList<>();
 
             for (EventRow event : allEvents) {
-                // Apply type filter
                 if (!typeFilter.equals("ALL") && !event.type.equals(typeFilter)) {
                     continue;
                 }
-
-                // Apply search filter
                 if (searchTerm.isEmpty() ||
-                    event.name.toLowerCase().contains(searchTerm) ||
-                    event.location.toLowerCase().contains(searchTerm)) {
+                        event.name.toLowerCase().contains(searchTerm) ||
+                        event.location.toLowerCase().contains(searchTerm)) {
                     filtered.add(event);
                 }
             }
@@ -167,7 +200,9 @@ public class ManageEventsController {
     public void onReset() {
         searchField.clear();
         typeFilterCombo.setValue("ALL");
-        displayEvents(allEvents);
+        if (allEvents != null) {
+            displayEvents(allEvents);
+        }
     }
 
     @FXML
@@ -259,7 +294,8 @@ public class ManageEventsController {
                 eventRepo.save(event);
 
                 showAlert("Success", "Event '" + eventName + "' created successfully!");
-                loadAllEvents(); // Refresh table
+                // Dùng hàm async tối ưu thay cho hàm cũ không tồn tại
+                loadAllEventsAsync(); // Refresh table
 
             }
         } catch (Exception e) {
@@ -295,10 +331,10 @@ public class ManageEventsController {
         confirmDialog.setHeaderText("Delete Event - " + selected.name);
         confirmDialog.setContentText(
                 "Are you sure you want to delete event: " + selected.name + "?\n\n" +
-                "Type: " + selected.type + "\n" +
-                "Location: " + selected.location + "\n" +
-                "Start Date: " + selected.startDate + "\n\n" +
-                "This action CANNOT be undone!"
+                        "Type: " + selected.type + "\n" +
+                        "Location: " + selected.location + "\n" +
+                        "Start Date: " + selected.startDate + "\n\n" +
+                        "This action CANNOT be undone!"
         );
 
         if (confirmDialog.showAndWait().isPresent() && confirmDialog.showAndWait().get() == ButtonType.OK) {
@@ -307,7 +343,8 @@ public class ManageEventsController {
                 eventRepo.delete(eventId);
 
                 showAlert("Success", "Event '" + selected.name + "' has been deleted successfully!");
-                loadAllEvents(); // Refresh table
+                // Dùng hàm async tối ưu thay cho hàm cũ không tồn tại
+                loadAllEventsAsync(); // Refresh table
 
             } catch (Exception e) {
                 showAlert("Error", "Failed to delete event: " + e.getMessage());
@@ -366,7 +403,7 @@ public class ManageEventsController {
         public int sessionCount;
 
         public EventRow(String id, String name, String type, String location,
-                       String startDate, String endDate, String status, int sessionCount) {
+                        String startDate, String endDate, String status, int sessionCount) {
             this.id = id;
             this.name = name;
             this.type = type;
@@ -378,4 +415,3 @@ public class ManageEventsController {
         }
     }
 }
-

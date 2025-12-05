@@ -13,8 +13,11 @@ import org.ems.domain.model.enums.EventType;
 import org.ems.domain.model.Event;
 import org.ems.config.AppContext;
 import org.ems.ui.stage.SceneManager;
+import org.ems.ui.util.AsyncTaskService;
+import org.ems.ui.util.LoadingDialog;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
 public class EventManagerController {
@@ -26,6 +29,7 @@ public class EventManagerController {
     @FXML private TableColumn<Event, String> colLocation;
 
     private final EventService eventService = AppContext.get().eventService;
+    private LoadingDialog loadingDialog;
 
     @FXML
     public void initialize() {
@@ -46,16 +50,56 @@ public class EventManagerController {
                         data.getValue().getLocation()
                 ));
 
-        loadEvents();
+        // Load events on background thread
+        loadEventsAsync();
     }
 
-    private void loadEvents() {
-        eventTable.setItems(FXCollections.observableList(eventService.getEvents()));
+    /**
+     * Load events asynchronously without blocking UI
+     */
+    private void loadEventsAsync() {
+        // Get stage safely
+        javafx.stage.Stage primaryStage = null;
+        try {
+            if (eventTable != null && eventTable.getScene() != null) {
+                primaryStage = (javafx.stage.Stage) eventTable.getScene().getWindow();
+            }
+        } catch (Exception e) {
+            System.err.println("Warning: Could not get stage for loading dialog");
+        }
+
+        if (primaryStage != null) {
+            loadingDialog = new LoadingDialog(primaryStage, "Loading events...");
+            loadingDialog.show();
+        }
+
+        // Run on background thread
+        AsyncTaskService.runAsync(
+                // Background task: Load events from database
+                () -> eventService.getEvents(),
+
+                // Success callback: Update UI on JavaFX thread
+                events -> {
+                    if (loadingDialog != null) {
+                        loadingDialog.close();
+                    }
+                    eventTable.setItems(FXCollections.observableList(events));
+                    System.out.println("✓ Loaded " + events.size() + " events");
+                },
+
+                // Error callback
+                error -> {
+                    if (loadingDialog != null) {
+                        loadingDialog.close();
+                    }
+                    System.err.println("✗ Failed to load events: " + error.getMessage());
+                }
+        );
     }
 
     @FXML
     public void onRefresh() {
-        loadEvents();
+        loadEventsAsync();
     }
 
     @FXML
@@ -120,8 +164,42 @@ public class EventManagerController {
         });
 
         dialog.showAndWait().ifPresent(ev -> {
-            eventService.createEvent(ev);
-            loadEvents();
+            // Add event asynchronously - safely get stage
+            javafx.stage.Stage primaryStage = null;
+            try {
+                if (eventTable != null && eventTable.getScene() != null) {
+                    primaryStage = (javafx.stage.Stage) eventTable.getScene().getWindow();
+                }
+            } catch (Exception e) {
+                System.err.println("Warning: Could not get stage for loading dialog");
+            }
+
+            LoadingDialog addDialog = null;
+            if (primaryStage != null) {
+                addDialog = new LoadingDialog(primaryStage, "Adding event...");
+                addDialog.show();
+            }
+
+            final LoadingDialog finalDialog = addDialog;
+            AsyncTaskService.runAsync(
+                    () -> {
+                        eventService.createEvent(ev);
+                        return null;
+                    },
+                    result -> {
+                        if (finalDialog != null) {
+                            finalDialog.close();
+                        }
+                        loadEventsAsync();  // Refresh list
+                        System.out.println("✓ Event added successfully");
+                    },
+                    error -> {
+                        if (finalDialog != null) {
+                            finalDialog.close();
+                        }
+                        System.err.println("✗ Failed to add event: " + error.getMessage());
+                    }
+            );
         });
     }
 }

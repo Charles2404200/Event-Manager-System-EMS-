@@ -8,6 +8,7 @@
 <?import javafx.scene.control.TableView?>
 <?import javafx.scene.control.TableColumn?>
 <?import javafx.scene.control.ComboBox?>
+<?import javafx.scene.control.ProgressBar?>
 <?import javafx.geometry.Insets?>
 
 <BorderPane xmlns="http://javafx.com/javafx"
@@ -48,10 +49,18 @@
             </HBox>
 
             <!-- Events Table -->
-            <VBox style="-fx-border-color: #cccccc; -fx-border-width: 1; -fx-padding: 10; -fx-border-radius: 5;" VBox.vgrow="ALWAYS">
+            <VBox fx:id="tableContainer" style="-fx-border-color: #cccccc; -fx-border-width: 1; -fx-padding: 10; -fx-border-radius: 5;" VBox.vgrow="ALWAYS">
                 <Label text="Available Events" style="-fx-font-size: 14; -fx-font-weight: bold; -fx-padding: 5;"/>
 
-                <TableView fx:id="eventsTable" prefHeight="500" VBox.vgrow="ALWAYS">
+                <!-- Loading Progress Placeholder -->
+                <VBox fx:id="loadingPlaceholder" style="-fx-alignment: center; -fx-spacing: 15; -fx-padding: 100;" VBox.vgrow="ALWAYS" visible="true">
+                    <Label text="Loading events..." style="-fx-font-size: 16; -fx-font-weight: bold; -fx-text-fill: #2c3e50;"/>
+                    <ProgressBar fx:id="loadingProgressBar" prefWidth="300" prefHeight="25" style="-fx-padding: 5;"/>
+                    <Label fx:id="loadingPercentLabel" text="0%" style="-fx-font-size: 14; -fx-text-fill: #666;"/>
+                </VBox>
+
+                <!-- Events Table (Hidden while loading) -->
+                <TableView fx:id="eventsTable" prefHeight="500" VBox.vgrow="ALWAYS" visible="false" managed="false">
                     <columns>
                         <TableColumn text="Event Name" prefWidth="200" sortable="true"/>
                         <TableColumn text="Type" prefWidth="120" sortable="true"/>
@@ -64,7 +73,12 @@
                     </columns>
                 </TableView>
 
-                <Label fx:id="recordCountLabel" text="Total Events: 0" style="-fx-padding: 10; -fx-font-size: 11; -fx-text-fill: #666;"/>
+                <!-- Pagination Controls -->
+                <HBox spacing="10" style="-fx-padding: 10; -fx-alignment: center;">
+                    <Button text="◀ Previous" style="-fx-padding: 8 15;" onAction="#onPreviousPage"/>
+                    <Label fx:id="recordCountLabel" text="Total Events: 0" style="-fx-padding: 8; -fx-font-size: 11; -fx-text-fill: #666;"/>
+                    <Button text="Next ▶" style="-fx-padding: 8 15;" onAction="#onNextPage"/>
+                </HBox>
             </VBox>
 
             <!-- Back Button -->

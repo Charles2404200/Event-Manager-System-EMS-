@@ -12,4 +12,14 @@ public interface EventRepository {
     Event findById(UUID id);
     List<Event> findAll();
     List<Event> findByType(EventType type);
+
+    /**
+     * Returns total number of events.
+     */
+    long count();
+
+    /**
+     * Returns a page of events using offset/limit.
+     */
+    List<Event> findPage(int offset, int limit);
 }

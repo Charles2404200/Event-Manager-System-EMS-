@@ -249,6 +249,107 @@ public class JdbcTicketRepository implements TicketRepository {
     }
 
     // ---------------------------------------------------------
+    // FIND TEMPLATES
+    // ---------------------------------------------------------
+    @Override
+    public List<Ticket> findTemplates() {
+        List<Ticket> list = new ArrayList<>();
+        String sql = "SELECT * FROM tickets WHERE attendee_id IS NULL";
+
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(sql)) {
+
+            while (rs.next()) list.add(mapRow(rs));
+
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+
+        return list;
+    }
+
+    // ---------------------------------------------------------
+    // FIND ASSIGNED
+    // ---------------------------------------------------------
+    @Override
+    public List<Ticket> findAssigned() {
+        List<Ticket> list = new ArrayList<>();
+        String sql = "SELECT * FROM tickets WHERE attendee_id IS NOT NULL";
+
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(sql)) {
+
+            while (rs.next()) list.add(mapRow(rs));
+
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+
+        return list;
+    }
+
+    // ---------------------------------------------------------
+    // FIND TEMPLATES PAGE
+    // ---------------------------------------------------------
+    @Override
+    public List<Ticket> findTemplatesPage(int offset, int limit) {
+        List<Ticket> list = new ArrayList<>();
+        String sql = "SELECT * FROM tickets WHERE attendee_id IS NULL ORDER BY created_at DESC NULLS LAST, id DESC LIMIT ? OFFSET ?";
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, limit);
+            ps.setInt(2, offset);
+
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) list.add(mapRow(rs));
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+
+        return list;
+    }
+
+    // ---------------------------------------------------------
+    // FIND ASSIGNED PAGE
+    // ---------------------------------------------------------
+    @Override
+    public List<Ticket> findAssignedPage(int offset, int limit) {
+        List<Ticket> list = new ArrayList<>();
+        String sql = "SELECT * FROM tickets WHERE attendee_id IS NOT NULL ORDER BY created_at DESC NULLS LAST, id DESC LIMIT ? OFFSET ?";
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, limit);
+            ps.setInt(2, offset);
+
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) list.add(mapRow(rs));
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+
+        return list;
+    }
+
+    // ---------------------------------------------------------
+    // COUNT
+    // ---------------------------------------------------------
+    @Override
+    public long count() {
+        String sql = "SELECT COUNT(*) FROM tickets";
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(sql)) {
+            if (rs.next()) {
+                return rs.getLong(1);
+            }
+            return 0L;
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to count tickets", e);
+        }
+    }
+
+    // ---------------------------------------------------------
     // MAPPER
     // ---------------------------------------------------------
     private Ticket mapRow(ResultSet rs) throws SQLException {

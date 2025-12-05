@@ -22,4 +22,9 @@ public interface AttendeeRepository {
     void unregisterEvent(UUID attendeeId, UUID eventId);
 
     void unregisterSession(UUID attendeeId, UUID sessionId);
+
+    /**
+     * Returns total number of attendees.
+     */
+    long count();
 }

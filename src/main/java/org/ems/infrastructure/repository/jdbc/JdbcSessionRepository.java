@@ -135,6 +135,106 @@ public class JdbcSessionRepository implements SessionRepository {
         return list;
     }
 
+    // ==========================================================
+    // OPTIMIZED METHODS WITH JOIN (Avoid N+1 Problem)
+    // ==========================================================
+
+    /**
+     * Find all sessions with presenters in single query
+     * OPTIMIZED: Batch load presenters instead of N+1 queries
+     */
+    public List<Session> findAllOptimized() {
+        List<Session> list = new ArrayList<>();
+
+        String sql = """
+            SELECT * FROM sessions
+            ORDER BY start_time DESC
+        """;
+
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(sql)) {
+
+            Map<UUID, Session> sessionMap = new LinkedHashMap<>();
+            while (rs.next()) {
+                Session s = mapRow(rs);
+                sessionMap.put(s.getId(), s);
+            }
+
+            // Load all presenters in one query instead of N queries
+            loadPresenterIdsOptimized(sessionMap);
+            list.addAll(sessionMap.values());
+
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+
+        return list;
+    }
+
+    /**
+     * Find sessions by event with optimized presenter loading
+     */
+    public List<Session> findByEventOptimized(UUID eventId) {
+        List<Session> list = new ArrayList<>();
+
+        String sql = """
+            SELECT * FROM sessions
+            WHERE event_id = ?
+            ORDER BY start_time DESC
+        """;
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setObject(1, eventId);
+            ResultSet rs = ps.executeQuery();
+
+            Map<UUID, Session> sessionMap = new LinkedHashMap<>();
+            while (rs.next()) {
+                Session s = mapRow(rs);
+                sessionMap.put(s.getId(), s);
+            }
+
+            loadPresenterIdsOptimized(sessionMap);
+            list.addAll(sessionMap.values());
+
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+
+        return list;
+    }
+
+    /**
+     * Find sessions by date with optimized presenter loading
+     */
+    public List<Session> findByDateOptimized(LocalDate date) {
+        List<Session> list = new ArrayList<>();
+
+        String sql = """
+            SELECT * FROM sessions
+            WHERE DATE(start_time) = ?
+            ORDER BY start_time ASC
+        """;
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setObject(1, date);
+            ResultSet rs = ps.executeQuery();
+
+            Map<UUID, Session> sessionMap = new LinkedHashMap<>();
+            while (rs.next()) {
+                Session s = mapRow(rs);
+                sessionMap.put(s.getId(), s);
+            }
+
+            loadPresenterIdsOptimized(sessionMap);
+            list.addAll(sessionMap.values());
+
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+
+        return list;
+    }
+
     // -------------------------------------------------------
     // FIND BY EVENT
     // -------------------------------------------------------
@@ -276,6 +376,115 @@ public class JdbcSessionRepository implements SessionRepository {
                         .add((UUID) rs.getObject("presenter_id"));
             }
         }
+    }
+
+    /**
+     * OPTIMIZED: Load presenter IDs for multiple sessions in one query
+     * Instead of N queries (one per session), load all in 1 query
+     */
+    private void loadPresenterIdsOptimized(Map<UUID, Session> sessionMap) throws SQLException {
+        if (sessionMap.isEmpty()) return;
+
+        String sessionIds = sessionMap.keySet().stream()
+                .map(id -> "'" + id.toString() + "'")
+                .reduce((a, b) -> a + "," + b)
+                .orElse("");
+
+        String sql = "SELECT session_id, presenter_id FROM presenter_session WHERE session_id IN (" + sessionIds + ")";
+
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(sql)) {
+
+            while (rs.next()) {
+                UUID sessionId = (UUID) rs.getObject("session_id");
+                UUID presenterId = (UUID) rs.getObject("presenter_id");
+
+                Session session = sessionMap.get(sessionId);
+                if (session != null) {
+                    session.getPresenterIds().add(presenterId);
+                }
+            }
+        }
+    }
+
+    // -------------------------------------------------------
+    // COUNT
+    // -------------------------------------------------------
+    @Override
+    public long count() {
+        String sql = "SELECT COUNT(*) FROM sessions";
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(sql)) {
+            if (rs.next()) {
+                return rs.getLong(1);
+            }
+            return 0L;
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to count sessions", e);
+        }
+    }
+
+    // -------------------------------------------------------
+    // FIND PAGE
+    // -------------------------------------------------------
+    @Override
+    public List<Session> findPage(int offset, int limit) {
+        List<Session> list = new ArrayList<>();
+
+        String sql = "SELECT * FROM sessions ORDER BY start_time DESC LIMIT ? OFFSET ?";
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, limit);
+            ps.setInt(2, offset);
+
+            ResultSet rs = ps.executeQuery();
+
+            Map<UUID, Session> sessionMap = new LinkedHashMap<>();
+            while (rs.next()) {
+                Session s = mapRow(rs);
+                sessionMap.put(s.getId(), s);
+            }
+
+            // Load presenter IDs for this page only (optimized IN query)
+            loadPresenterIdsOptimized(sessionMap);
+            list.addAll(sessionMap.values());
+
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to page sessions", e);
+        }
+
+        return list;
+    }
+
+    // -------------------------------------------------------
+    // COUNT BY EVENT IDS
+    // -------------------------------------------------------
+    @Override
+    public Map<UUID, Integer> countByEventIds(List<UUID> eventIds) {
+        Map<UUID, Integer> result = new HashMap<>();
+        if (eventIds == null || eventIds.isEmpty()) {
+            return result;
+        }
+
+        String inClause = eventIds.stream()
+                .map(id -> "'" + id.toString() + "'")
+                .reduce((a, b) -> a + "," + b)
+                .orElse("");
+
+        String sql = "SELECT event_id, COUNT(*) AS cnt FROM sessions WHERE event_id IN (" + inClause + ") GROUP BY event_id";
+
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(sql)) {
+            while (rs.next()) {
+                UUID eventId = (UUID) rs.getObject("event_id");
+                int cnt = rs.getInt("cnt");
+                result.put(eventId, cnt);
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to count sessions by event ids", e);
+        }
+
+        return result;
     }
 
     // -------------------------------------------------------

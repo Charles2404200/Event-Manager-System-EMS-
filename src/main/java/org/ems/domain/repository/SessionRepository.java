@@ -24,4 +24,19 @@ public interface SessionRepository {
     void assignPresenter(UUID sessionId, UUID presenterId);
 
     void clearPresenters(UUID sessionId);
+
+    /**
+     * Returns total number of sessions.
+     */
+    long count();
+
+    /**
+     * Phân trang session: trả về danh sách theo offset/limit.
+     */
+    List<Session> findPage(int offset, int limit);
+
+    /**
+     * Batch count sessions for multiple events using GROUP BY.
+     */
+    java.util.Map<java.util.UUID, Integer> countByEventIds(java.util.List<java.util.UUID> eventIds);
 }

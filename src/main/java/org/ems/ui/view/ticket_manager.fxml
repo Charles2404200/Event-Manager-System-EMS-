@@ -12,7 +12,7 @@
             <Button text="Back" onAction="#backToDashboard"/>
             <Label text="Ticket Manager"
                    style="-fx-font-size: 18px; -fx-font-weight: bold;"/>
-            <Pane Hgrow="ALWAYS"/>
+            <Pane maxWidth="Infinity" HBox.hgrow="ALWAYS"/>
             <Button text="Refresh" onAction="#onRefresh"/>
         </ToolBar>
     </top>

@@ -7,7 +7,6 @@ import javafx.scene.control.ScrollPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.layout.HBox;
 import javafx.scene.control.Button;
-import javafx.concurrent.Task;
 import javafx.application.Platform;
 import org.ems.config.AppContext;
 import org.ems.domain.model.Person;
@@ -18,6 +17,8 @@ import org.ems.domain.model.Session;
 import org.ems.domain.model.Ticket;
 import org.ems.domain.model.enums.Role;
 import org.ems.ui.stage.SceneManager;
+import org.ems.ui.util.AsyncTaskService;
+import org.ems.ui.util.LoadingDialog;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -38,12 +39,13 @@ public class DashboardController {
     private final AppContext appContext = AppContext.get();
     private Person currentUser;
     private Role userRole;
+    private LoadingDialog loadingDialog;
 
     @FXML
     public void initialize() {
         loadUserInfo();
         setupRoleBasedView();
-        loadDynamicContent();
+        loadDynamicContentAsync();
     }
 
     /**
@@ -67,36 +69,67 @@ public class DashboardController {
     }
 
     /**
-     * Load dynamic content based on user role
+     * Load dynamic content based on user role - asynchronously
      */
-    private void loadDynamicContent() {
-        Task<Void> task = new Task<>() {
-            @Override
-            protected Void call() throws Exception {
-                try {
-                    switch (userRole) {
-                        case ATTENDEE:
-                            loadAttendeeContent();
-                            break;
-                        case PRESENTER:
-                            loadPresenterContent();
-                            break;
-                        case EVENT_ADMIN:
-                            loadEventAdminContent();
-                            break;
-                        case SYSTEM_ADMIN:
-                            // No dynamic content needed for now
-                            break;
-                    }
-                } catch (Exception e) {
-                    System.err.println("Error loading dynamic content: " + e.getMessage());
-                    e.printStackTrace();
-                }
-                return null;
+    private void loadDynamicContentAsync() {
+        // Get the primary stage safely
+        javafx.stage.Stage primaryStage = null;
+        try {
+            // Try to get stage from root element if available
+            if (attendeeSection != null && attendeeSection.getScene() != null) {
+                primaryStage = (javafx.stage.Stage) attendeeSection.getScene().getWindow();
             }
-        };
+        } catch (Exception e) {
+            // Fallback: primary stage will be null, no loading dialog
+        }
 
-        new Thread(task).start();
+        // Only show loading dialog if we can get the stage
+        if (primaryStage != null) {
+            loadingDialog = new LoadingDialog(primaryStage, "Loading dashboard...");
+            loadingDialog.show();
+        }
+
+        AsyncTaskService.runAsync(
+                // Background task
+                () -> {
+                    try {
+                        switch (userRole) {
+                            case ATTENDEE:
+                                loadAttendeeContent();
+                                break;
+                            case PRESENTER:
+                                loadPresenterContent();
+                                break;
+                            case EVENT_ADMIN:
+                                loadEventAdminContent();
+                                break;
+                            case SYSTEM_ADMIN:
+                                // No dynamic content needed for now
+                                break;
+                        }
+                    } catch (Exception e) {
+                        System.err.println("Error loading dynamic content: " + e.getMessage());
+                        e.printStackTrace();
+                    }
+                    return null;
+                },
+
+                // Success callback
+                result -> {
+                    if (loadingDialog != null) {
+                        loadingDialog.close();
+                    }
+                    System.out.println("✓ Dashboard loaded successfully");
+                },
+
+                // Error callback
+                error -> {
+                    if (loadingDialog != null) {
+                        loadingDialog.close();
+                    }
+                    System.err.println("✗ Error loading dashboard: " + error.getMessage());
+                }
+        );
     }
 
     /**

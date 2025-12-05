@@ -132,6 +132,20 @@ public class JdbcAttendeeRepository implements AttendeeRepository {
         }
     }
 
+    @Override
+    public long count() {
+        String sql = "SELECT COUNT(*) FROM attendees";
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(sql)) {
+            if (rs.next()) {
+                return rs.getLong(1);
+            }
+            return 0L;
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to count attendees", e);
+        }
+    }
+
     private Attendee mapRow(ResultSet rs) throws SQLException {
         Attendee a = new Attendee();
         a.setId((UUID) rs.getObject("id"));
@@ -166,6 +180,64 @@ public class JdbcAttendeeRepository implements AttendeeRepository {
 
             while (rs.next()) {
                 a.getRegisteredSessionIds().add((UUID) rs.getObject("session_id"));
+            }
+        }
+    }
+
+    /**
+     * OPTIMIZED: Load event mappings for multiple attendees in one query
+     * Instead of N queries (one per attendee), load all in 1 query
+     */
+    private void loadEventMappingOptimized(Map<UUID, Attendee> attendeeMap) throws SQLException {
+        if (attendeeMap.isEmpty()) return;
+
+        String attendeeIds = attendeeMap.keySet().stream()
+                .map(id -> "'" + id.toString() + "'")
+                .reduce((a, b) -> a + "," + b)
+                .orElse("");
+
+        String sql = "SELECT attendee_id, event_id FROM attendee_event WHERE attendee_id IN (" + attendeeIds + ")";
+
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(sql)) {
+
+            while (rs.next()) {
+                UUID attendeeId = (UUID) rs.getObject("attendee_id");
+                UUID eventId = (UUID) rs.getObject("event_id");
+
+                Attendee attendee = attendeeMap.get(attendeeId);
+                if (attendee != null) {
+                    attendee.getRegisteredEventIds().add(eventId);
+                }
+            }
+        }
+    }
+
+    /**
+     * OPTIMIZED: Load session mappings for multiple attendees in one query
+     * Instead of N queries (one per attendee), load all in 1 query
+     */
+    private void loadSessionMappingOptimized(Map<UUID, Attendee> attendeeMap) throws SQLException {
+        if (attendeeMap.isEmpty()) return;
+
+        String attendeeIds = attendeeMap.keySet().stream()
+                .map(id -> "'" + id.toString() + "'")
+                .reduce((a, b) -> a + "," + b)
+                .orElse("");
+
+        String sql = "SELECT attendee_id, session_id FROM attendee_session WHERE attendee_id IN (" + attendeeIds + ")";
+
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(sql)) {
+
+            while (rs.next()) {
+                UUID attendeeId = (UUID) rs.getObject("attendee_id");
+                UUID sessionId = (UUID) rs.getObject("session_id");
+
+                Attendee attendee = attendeeMap.get(attendeeId);
+                if (attendee != null) {
+                    attendee.getRegisteredSessionIds().add(sessionId);
+                }
             }
         }
     }

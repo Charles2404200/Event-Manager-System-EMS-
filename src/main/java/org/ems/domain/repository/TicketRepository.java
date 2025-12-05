@@ -29,4 +29,29 @@ public interface TicketRepository {
     List<Ticket> findByStatus(TicketStatus status);
 
     List<Ticket> findByPaymentStatus(PaymentStatus status);
+
+    /**
+     * Returns total number of tickets.
+     */
+    long count();
+
+    /**
+     * Find ticket templates: tickets chưa gán attendee (attendee_id IS NULL).
+     */
+    List<Ticket> findTemplates();
+
+    /**
+     * Find assigned tickets: tickets đã gán attendee (attendee_id IS NOT NULL).
+     */
+    List<Ticket> findAssigned();
+
+    /**
+     * Templates phân trang.
+     */
+    List<Ticket> findTemplatesPage(int offset, int limit);
+
+    /**
+     * Assigned tickets phân trang.
+     */
+    List<Ticket> findAssignedPage(int offset, int limit);
 }

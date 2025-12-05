@@ -12,6 +12,8 @@ import org.ems.config.AppContext;
 import org.ems.domain.model.Event;
 import org.ems.domain.repository.EventRepository;
 import org.ems.ui.stage.SceneManager;
+import org.ems.ui.util.AsyncTaskService;
+import org.ems.ui.util.LoadingDialog;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -33,6 +35,7 @@ public class ViewEventsHomeController {
 
     private EventRepository eventRepo;
     private List<Event> allEvents;
+    private LoadingDialog loadingDialog;
 
     @FXML
     public void initialize() {
@@ -51,9 +54,12 @@ public class ViewEventsHomeController {
             ));
             statusFilterCombo.setValue("ALL");
 
-            // Load events
-            loadAllEvents();
-            displayEvents(allEvents);
+            // Add filter listeners
+            typeFilterCombo.setOnAction(e -> applyFilters());
+            statusFilterCombo.setOnAction(e -> applyFilters());
+
+            // Load events on background thread
+            loadAllEventsAsync();
 
         } catch (Exception e) {
             showAlert("Error", "Failed to initialize: " + e.getMessage());
@@ -61,18 +67,84 @@ public class ViewEventsHomeController {
         }
     }
 
-    private void loadAllEvents() {
+    /**
+     * Load events asynchronously without blocking UI
+     */
+    private void loadAllEventsAsync() {
+        // Get stage safely
+        javafx.stage.Stage primaryStage = null;
         try {
-            allEvents = new ArrayList<>();
-
-            if (eventRepo != null) {
-                List<Event> events = eventRepo.findAll();
-                allEvents.addAll(events);
-                System.out.println(" Loaded " + events.size() + " events");
+            if (eventsFlowPane != null && eventsFlowPane.getScene() != null) {
+                primaryStage = (javafx.stage.Stage) eventsFlowPane.getScene().getWindow();
             }
         } catch (Exception e) {
-            System.err.println("⚠ Error loading events: " + e.getMessage());
+            System.err.println("Warning: Could not get stage for loading dialog");
         }
+
+        if (primaryStage != null) {
+            loadingDialog = new LoadingDialog(primaryStage, "Loading events...");
+            loadingDialog.show();
+        }
+
+        AsyncTaskService.runAsync(
+                // Background task
+                () -> {
+                    List<Event> events = new ArrayList<>();
+                    if (eventRepo != null) {
+                        events = eventRepo.findAll();
+                        System.out.println("✓ Loaded " + events.size() + " events");
+                    }
+                    return events;
+                },
+
+                // Success callback
+                events -> {
+                    if (loadingDialog != null) {
+                        loadingDialog.close();
+                    }
+                    allEvents = new ArrayList<>(events);
+                    applyFilters();
+                },
+
+                // Error callback
+                error -> {
+                    if (loadingDialog != null) {
+                        loadingDialog.close();
+                    }
+                    showAlert("Error", "Failed to load events: " + error.getMessage());
+                    System.err.println("✗ Error loading events: " + error.getMessage());
+                }
+        );
+    }
+
+    /**
+     * Apply filters and display events
+     */
+    private void applyFilters() {
+        if (allEvents == null) return;
+
+        List<Event> filtered = allEvents.stream()
+                .filter(e -> {
+                    String typeFilter = typeFilterCombo.getValue();
+                    if (!"ALL".equals(typeFilter) && !e.getType().name().equals(typeFilter)) {
+                        return false;
+                    }
+
+                    String statusFilter = statusFilterCombo.getValue();
+                    if (!"ALL".equals(statusFilter) && !e.getStatus().name().equals(statusFilter)) {
+                        return false;
+                    }
+
+                    String search = searchField.getText().toLowerCase();
+                    if (!search.isEmpty() && !e.getName().toLowerCase().contains(search)) {
+                        return false;
+                    }
+
+                    return true;
+                })
+                .collect(Collectors.toList());
+
+        displayEvents(filtered);
     }
 
     private void displayEvents(List<Event> events) {

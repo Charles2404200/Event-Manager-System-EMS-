@@ -106,9 +106,64 @@ CREATE TABLE IF NOT EXISTS tickets (
 -- ===========================================================
 -- INDEXING FOR PERFORMANCE
 -- ===========================================================
+
+-- PERSONS Table Indexes
+CREATE INDEX IF NOT EXISTS idx_persons_username ON persons(username);
+CREATE INDEX IF NOT EXISTS idx_persons_email ON persons(email);
+CREATE INDEX IF NOT EXISTS idx_persons_role ON persons(role);
+CREATE INDEX IF NOT EXISTS idx_persons_created_at ON persons(created_at);
+
+-- EVENTS Table Indexes
+CREATE INDEX IF NOT EXISTS idx_events_type ON events(type);
+CREATE INDEX IF NOT EXISTS idx_events_status ON events(status);
+CREATE INDEX IF NOT EXISTS idx_events_start_date ON events(start_date);
+CREATE INDEX IF NOT EXISTS idx_events_end_date ON events(end_date);
+CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
+-- Composite index for date range queries
+CREATE INDEX IF NOT EXISTS idx_events_date_range ON events(start_date, end_date);
+
+-- SESSIONS Table Indexes
 CREATE INDEX IF NOT EXISTS idx_sessions_event ON sessions(event_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_start_time ON sessions(start_time);
+CREATE INDEX IF NOT EXISTS idx_sessions_end_time ON sessions(end_time);
+CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions(created_at);
+-- Composite index for event + time queries
+CREATE INDEX IF NOT EXISTS idx_sessions_event_time ON sessions(event_id, start_time, end_time);
+
+-- ATTENDEES Table Indexes (for queries on persons joined with attendees)
+CREATE INDEX IF NOT EXISTS idx_attendees_id ON attendees(id);
+
+-- PRESENTERS Table Indexes
+CREATE INDEX IF NOT EXISTS idx_presenters_id ON presenters(id);
+CREATE INDEX IF NOT EXISTS idx_presenters_type ON presenters(presenter_type);
+
+-- PRESENTER_SESSION (Many-to-Many) Indexes
 CREATE INDEX IF NOT EXISTS idx_presenter_session_presenter ON presenter_session(presenter_id);
+CREATE INDEX IF NOT EXISTS idx_presenter_session_session ON presenter_session(session_id);
+-- Covering index for both directions
+CREATE INDEX IF NOT EXISTS idx_presenter_session_both ON presenter_session(presenter_id, session_id);
+
+-- ATTENDEE_SESSION (Many-to-Many) Indexes
 CREATE INDEX IF NOT EXISTS idx_attendee_session_attendee ON attendee_session(attendee_id);
+CREATE INDEX IF NOT EXISTS idx_attendee_session_session ON attendee_session(session_id);
+-- Covering index for both directions
+CREATE INDEX IF NOT EXISTS idx_attendee_session_both ON attendee_session(attendee_id, session_id);
+
+-- ATTENDEE_EVENT (Many-to-Many) Indexes
+CREATE INDEX IF NOT EXISTS idx_attendee_event_attendee ON attendee_event(attendee_id);
+CREATE INDEX IF NOT EXISTS idx_attendee_event_event ON attendee_event(event_id);
+-- Covering index for both directions
+CREATE INDEX IF NOT EXISTS idx_attendee_event_both ON attendee_event(attendee_id, event_id);
+
+-- TICKETS Table Indexes
 CREATE INDEX IF NOT EXISTS idx_ticket_event ON tickets(event_id);
 CREATE INDEX IF NOT EXISTS idx_ticket_session ON tickets(session_id);
 CREATE INDEX IF NOT EXISTS idx_ticket_attendee ON tickets(attendee_id);
+CREATE INDEX IF NOT EXISTS idx_ticket_type ON tickets(type);
+CREATE INDEX IF NOT EXISTS idx_ticket_status ON tickets(status);
+CREATE INDEX IF NOT EXISTS idx_ticket_payment_status ON tickets(payment_status);
+CREATE INDEX IF NOT EXISTS idx_ticket_created_at ON tickets(created_at);
+-- Composite indexes for common query patterns
+CREATE INDEX IF NOT EXISTS idx_ticket_attendee_status ON tickets(attendee_id, status);
+CREATE INDEX IF NOT EXISTS idx_ticket_event_status ON tickets(event_id, status);
+CREATE INDEX IF NOT EXISTS idx_ticket_session_attendee ON tickets(session_id, attendee_id);

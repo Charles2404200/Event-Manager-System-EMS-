@@ -1,20 +1,15 @@
 package org.ems.ui.controller;
 
+import javafx.concurrent.Task;
 import javafx.fxml.FXML;
 import javafx.scene.control.Label;
-import javafx.concurrent.Task;
 import org.ems.config.AppContext;
-import org.ems.domain.model.Attendee;
-import org.ems.domain.model.Presenter;
-import org.ems.domain.model.Event;
-import org.ems.domain.model.enums.EventStatus;
+import org.ems.infrastructure.repository.jdbc.JdbcEventRepository;
 import org.ems.ui.stage.SceneManager;
+
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
-/**
- * @author <your group number>
- */
 public class AdminDashboardController {
 
     @FXML private Label adminInfoLabel;
@@ -28,30 +23,24 @@ public class AdminDashboardController {
     @FXML private Label dbStatusLabel;
     @FXML private Label lastUpdateLabel;
 
-
     @FXML
     public void initialize() {
-        // Get current user from AppContext
         AppContext ctx = AppContext.get();
         String adminUsername = ctx.currentUser != null ? ctx.currentUser.getUsername() : "admin";
         adminInfoLabel.setText("Logged in as: " + adminUsername + " (SYSTEM_ADMIN)");
 
-        // Load statistics in background to avoid freezing UI
         loadStatisticsAsync();
     }
 
     private void loadStatisticsAsync() {
         Task<StatisticsData> task = new Task<>() {
             @Override
-            protected StatisticsData call() throws Exception {
+            protected StatisticsData call() {
                 try {
                     AppContext ctx = AppContext.get();
-                    
-                    // Check database connection
                     boolean dbConnected = ctx.connection != null && !ctx.connection.isClosed();
 
-                    // Get counts from repositories
-                    int totalUsers = 0;
+                    int totalUsers = 0; // userRepo hiện null, để 0 cho nhanh
                     int totalAttendees = 0;
                     int totalPresenters = 0;
                     int totalEvents = 0;
@@ -60,55 +49,39 @@ public class AdminDashboardController {
                     int activeEvents = 0;
 
                     if (dbConnected) {
-                        // Total Users
-                        if (ctx.userRepo != null) {
-                            totalUsers = ctx.userRepo.findAll().size();
-                        }
-
-                        // Total Attendees
                         if (ctx.attendeeRepo != null) {
-                            totalAttendees = ctx.attendeeRepo.findAll().size();
+                            totalAttendees = (int) ctx.attendeeRepo.count();
                         }
-
-                        // Total Presenters
                         if (ctx.presenterRepo != null) {
-                            totalPresenters = ctx.presenterRepo.findAll().size();
+                            totalPresenters = (int) ctx.presenterRepo.count();
                         }
-
-                        // Total Events
-                        if (ctx.eventRepo != null) {
-                            java.util.List<Event> events = ctx.eventRepo.findAll();
-                            totalEvents = events.size();
-
-                            // Count active events
-                            for (Event event : events) {
-                                if (event.getStatus() == EventStatus.ONGOING ||
-                                    event.getStatus() == EventStatus.SCHEDULED) {
-                                    activeEvents++;
-                                }
-                            }
-                        }
-
-                        // Total Sessions
                         if (ctx.sessionRepo != null) {
-                            totalSessions = ctx.sessionRepo.findAll().size();
+                            totalSessions = (int) ctx.sessionRepo.count();
                         }
-
-                        // Total Tickets
                         if (ctx.ticketRepo != null) {
-                            totalTickets = ctx.ticketRepo.findAll().size();
+                            totalTickets = (int) ctx.ticketRepo.count();
+                        }
+                        if (ctx.eventRepo != null) {
+                            // Dùng COUNT(*) thay vì findAll().size()
+                            if (ctx.eventRepo instanceof JdbcEventRepository jdbcEventRepo) {
+                                totalEvents = (int) jdbcEventRepo.count();
+                                activeEvents = (int) jdbcEventRepo.countActiveEvents();
+                            } else {
+                                totalEvents = ctx.eventRepo.findAll().size();
+                                activeEvents = 0; // fallback đơn giản
+                            }
                         }
                     }
 
                     return new StatisticsData(
-                        totalUsers,
-                        totalAttendees,
-                        totalPresenters,
-                        totalEvents,
-                        totalSessions,
-                        totalTickets,
-                        activeEvents,
-                        dbConnected
+                            totalUsers,
+                            totalAttendees,
+                            totalPresenters,
+                            totalEvents,
+                            totalSessions,
+                            totalTickets,
+                            activeEvents,
+                            dbConnected
                     );
                 } catch (Exception e) {
                     System.err.println("Error loading statistics: " + e.getMessage());
@@ -117,20 +90,18 @@ public class AdminDashboardController {
                 }
             }
         };
-        
-        // Handle success
-        task.setOnSucceeded(event -> {
-            StatisticsData stats = task.getValue();
-            totalUsersLabel.setText(String.valueOf(stats.totalUsers));
-            totalAttendeesLabel.setText(String.valueOf(stats.totalAttendees));
-            totalPresentersLabel.setText(String.valueOf(stats.totalPresenters));
-            totalEventsLabel.setText(String.valueOf(stats.totalEvents));
-            totalSessionsLabel.setText(String.valueOf(stats.totalSessions));
-            totalTicketsLabel.setText(String.valueOf(stats.totalTickets));
-            activeEventsLabel.setText(String.valueOf(stats.activeEvents));
 
-            // Update database status
-            if (stats.dbConnected) {
+        task.setOnSucceeded(evt -> {
+            StatisticsData s = task.getValue();
+            totalUsersLabel.setText(String.valueOf(s.totalUsers));
+            totalAttendeesLabel.setText(String.valueOf(s.totalAttendees));
+            totalPresentersLabel.setText(String.valueOf(s.totalPresenters));
+            totalEventsLabel.setText(String.valueOf(s.totalEvents));
+            totalSessionsLabel.setText(String.valueOf(s.totalSessions));
+            totalTicketsLabel.setText(String.valueOf(s.totalTickets));
+            activeEventsLabel.setText(String.valueOf(s.activeEvents));
+
+            if (s.dbConnected) {
                 dbStatusLabel.setText("🟢 Connected");
                 dbStatusLabel.setStyle("-fx-font-size: 11; -fx-text-fill: #2ecc71; -fx-font-weight: bold;");
             } else {
@@ -138,15 +109,12 @@ public class AdminDashboardController {
                 dbStatusLabel.setStyle("-fx-font-size: 11; -fx-text-fill: #e74c3c; -fx-font-weight: bold;");
             }
 
-            // Update last update time
             LocalDateTime now = LocalDateTime.now();
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("HH:mm:ss");
-            lastUpdateLabel.setText(now.format(formatter));
+            lastUpdateLabel.setText(now.format(DateTimeFormatter.ofPattern("HH:mm:ss")));
         });
-        
-        // Handle failure
-        task.setOnFailed(event -> {
-            System.err.println("Failed to load statistics: " + task.getException().getMessage());
+
+        task.setOnFailed(evt -> {
+            System.err.println("Failed to load statistics: " + task.getException());
             totalUsersLabel.setText("N/A");
             totalAttendeesLabel.setText("N/A");
             totalPresentersLabel.setText("N/A");
@@ -157,35 +125,22 @@ public class AdminDashboardController {
             dbStatusLabel.setText("🔴 Error");
             dbStatusLabel.setStyle("-fx-font-size: 11; -fx-text-fill: #e74c3c; -fx-font-weight: bold;");
         });
-        
-        // Run in background thread
-        new Thread(task).start();
-    }
-    
-    // Inner class to hold statistics data
-    private static class StatisticsData {
-        int totalUsers;
-        int totalAttendees;
-        int totalPresenters;
-        int totalEvents;
-        int totalSessions;
-        int totalTickets;
-        int activeEvents;
-        boolean dbConnected;
 
-        StatisticsData(int totalUsers, int totalAttendees, int totalPresenters,
-                      int totalEvents, int totalSessions, int totalTickets,
-                      int activeEvents, boolean dbConnected) {
-            this.totalUsers = totalUsers;
-            this.totalAttendees = totalAttendees;
-            this.totalPresenters = totalPresenters;
-            this.totalEvents = totalEvents;
-            this.totalSessions = totalSessions;
-            this.totalTickets = totalTickets;
-            this.activeEvents = activeEvents;
-            this.dbConnected = dbConnected;
-        }
+        Thread t = new Thread(task, "admin-stats-loader");
+        t.setDaemon(true);
+        t.start();
     }
+
+    private record StatisticsData(
+            int totalUsers,
+            int totalAttendees,
+            int totalPresenters,
+            int totalEvents,
+            int totalSessions,
+            int totalTickets,
+            int activeEvents,
+            boolean dbConnected
+    ) {}
 
     @FXML
     public void onDashboard() {
@@ -194,56 +149,46 @@ public class AdminDashboardController {
 
     @FXML
     public void onManageUsers() {
-        System.out.println("Manage Users clicked");
         SceneManager.switchTo("manage_users.fxml", "Event Manager System - Manage Users");
     }
 
     @FXML
     public void onManageEvents() {
-        System.out.println("Manage Events clicked");
         SceneManager.switchTo("manage_events.fxml", "Event Manager System - Manage Events");
     }
 
     @FXML
     public void onManageSessions() {
-        System.out.println("Manage Sessions clicked");
         SceneManager.switchTo("session_manager.fxml", "Event Manager System - Manage Sessions");
     }
 
     @FXML
     public void onManageTickets() {
-        System.out.println("Manage Tickets clicked");
         SceneManager.switchTo("ticket_manager.fxml", "Event Manager System - Manage Tickets");
     }
 
     @FXML
     public void onManagePresenters() {
-        System.out.println("Manage Presenters clicked");
         SceneManager.switchTo("presenter_manager.fxml", "Event Manager System - Manage Presenters");
     }
 
     @FXML
     public void onViewReports() {
         System.out.println("View Reports clicked");
-        // TODO: Load reports page
     }
 
     @FXML
     public void onActivityLogs() {
         System.out.println("Activity Logs clicked");
-        // TODO: Load activity logs page
     }
 
     @FXML
     public void onSettings() {
         System.out.println("Settings clicked");
-        // TODO: Load settings page
     }
 
     @FXML
     public void onLogout() {
-        System.out.println("Logout clicked");
         SceneManager.switchTo("home.fxml", "Event Manager System - Home");
     }
 }
-

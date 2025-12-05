@@ -26,4 +26,9 @@ public interface PresenterRepository {
     void removeFromSession(UUID presenterId, UUID sessionId);
 
     void clearSessions(UUID presenterId);
+
+    /**
+     * Returns total number of presenters.
+     */
+    long count();
 }

@@ -312,6 +312,23 @@ public class JdbcPresenterRepository implements PresenterRepository {
     }
 
     // -------------------------------------------------------
+    // COUNT PRESENTERS
+    // -------------------------------------------------------
+    @Override
+    public long count() {
+        String sql = "SELECT COUNT(*) FROM presenters";
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(sql)) {
+            if (rs.next()) {
+                return rs.getLong(1);
+            }
+            return 0L;
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to count presenters", e);
+        }
+    }
+
+    // -------------------------------------------------------
     // INTERNAL METHODS
     // -------------------------------------------------------
     private void saveSessionLinks(Presenter p) throws SQLException {

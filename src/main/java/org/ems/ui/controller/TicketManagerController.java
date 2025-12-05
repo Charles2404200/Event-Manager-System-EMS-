@@ -32,6 +32,7 @@ public class TicketManagerController {
     @FXML private TextField templatePriceField;
     @FXML private TableView<TemplateRow> templatesTable;
     @FXML private Label templatesCountLabel;
+    @FXML private Label templatesPageLabel;
 
     // Tab 2: Assign Tickets
     @FXML private ComboBox<String> assignAttendeeCombo;
@@ -41,10 +42,18 @@ public class TicketManagerController {
     @FXML private Label totalAssignedLabel;
     @FXML private Label activeAssignedLabel;
     @FXML private Label totalRevenueLabel;
+    @FXML private Label assignedPageLabel;
 
     private TicketRepository ticketRepo;
     private List<TemplateRow> allTemplates;
     private List<TicketRow> allAssignedTickets;
+
+    // Pagination state
+    private static final int PAGE_SIZE = 20;
+    private int currentTemplatePage = 0;
+    private int totalTemplatePages = 1;
+    private int currentAssignedPage = 0;
+    private int totalAssignedPages = 1;
 
     private Map<String, UUID> eventMap = new HashMap<>();
     private Map<String, UUID> sessionMap = new HashMap<>();
@@ -67,15 +76,35 @@ public class TicketManagerController {
             setupTemplateTableColumns();
             setupAssignedTicketTableColumns();
 
-            // Load data
+            // Load data (tối ưu: templates + assigned tickets chạy async)
             loadEvents();
-            loadTemplates();
-            loadAssignedTickets();
 
+            // Tính tổng số trang trước (dựa trên count đơn giản)
+            long templateCount = ticketRepo != null ? ticketRepo.findTemplates().size() : 0;
+            long assignedCount = ticketRepo != null ? ticketRepo.findAssigned().size() : 0;
+            totalTemplatePages = Math.max(1, (int) Math.ceil(templateCount / (double) PAGE_SIZE));
+            totalAssignedPages = Math.max(1, (int) Math.ceil(assignedCount / (double) PAGE_SIZE));
+            updateTemplatesPageLabel();
+            updateAssignedPageLabel();
+
+            loadTemplatesAsync();
+            loadAssignedTickets();
 
         } catch (Exception e) {
             showAlert("Error", "Failed to initialize: " + e.getMessage());
             e.printStackTrace();
+        }
+    }
+
+    private void updateTemplatesPageLabel() {
+        if (templatesPageLabel != null) {
+            templatesPageLabel.setText("Page " + (currentTemplatePage + 1) + " / " + totalTemplatePages);
+        }
+    }
+
+    private void updateAssignedPageLabel() {
+        if (assignedPageLabel != null) {
+            assignedPageLabel.setText("Page " + (currentAssignedPage + 1) + " / " + totalAssignedPages);
         }
     }
 
@@ -174,70 +203,120 @@ public class TicketManagerController {
         }
     }
 
-    private void loadTemplates() {
+    // ====== Tối ưu load templates ======
+
+    private void loadTemplatesAsync() {
+        templatesCountLabel.setText("Loading templates...");
+
+        Task<List<TemplateRow>> task = new Task<>() {
+            @Override
+            protected List<TemplateRow> call() {
+                return loadTemplatesOptimized();
+            }
+        };
+
+        task.setOnSucceeded(evt -> {
+            allTemplates = task.getValue();
+            displayTemplates(allTemplates);
+        });
+
+        task.setOnFailed(evt -> {
+            Throwable ex = task.getException();
+            System.err.println("Error loading templates: " + (ex != null ? ex.getMessage() : "unknown"));
+            templatesCountLabel.setText("Error loading templates");
+        });
+
+        Thread t = new Thread(task, "ticket-templates-loader");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /**
+     * Tối ưu hoá logic load templates:
+     * - Chỉ 1 lần ticketRepo.findAll()
+     * - Dùng Map<TemplateKey,Integer> để đếm số ticket assigned theo template (O(N))
+     * - Không còn vòng lặp lồng nhau O(N^2)
+     */
+    private List<TemplateRow> loadTemplatesOptimized() {
+        List<TemplateRow> result = new ArrayList<>();
         try {
-            allTemplates = new ArrayList<>();
+            if (ticketRepo == null) return result;
 
-            if (ticketRepo != null) {
-                // Only get templates (tickets without attendeeId) - use filtered query if available
-                List<Ticket> templates = new ArrayList<>();
-                List<Ticket> allTickets = ticketRepo.findAll();
+            int offset = currentTemplatePage * PAGE_SIZE;
+            List<Ticket> templateTickets = ticketRepo.findTemplatesPage(offset, PAGE_SIZE);
+            // Assigned có thể giữ toàn bộ để đếm available, thường ít hơn templates tổng
+            List<Ticket> assignedTickets = ticketRepo.findAssigned();
 
-                // Filter only templates on client side
-                for (Ticket ticket : allTickets) {
-                    if (ticket.getAttendeeId() == null) {
-                        templates.add(ticket);
-                    }
+            AppContext context = AppContext.get();
+            Map<UUID, String> eventNameCache = new HashMap<>();
+            Map<UUID, String> sessionNameCache = new HashMap<>();
+            if (context.eventRepo != null) {
+                for (Event evt : context.eventRepo.findAll()) {
+                    eventNameCache.put(evt.getId(), evt.getName());
                 }
-
-                AppContext context = AppContext.get();
-
-                // Add templates to display
-                for (Ticket ticket : templates) {
-                    String eventName = "Unknown";
-                    String sessionName = "Unknown";
-
-                    try {
-                        if (context.eventRepo != null && ticket.getEventId() != null) {
-                            Event evt = context.eventRepo.findById(ticket.getEventId());
-                            if (evt != null) eventName = evt.getName();
-                        }
-                        if (context.sessionRepo != null && ticket.getSessionId() != null) {
-                            Session sess = context.sessionRepo.findById(ticket.getSessionId());
-                            if (sess != null) sessionName = sess.getTitle();
-                        }
-                    } catch (Exception e) {
-                        System.err.println("Error mapping template: " + e.getMessage());
-                    }
-
-                    // Count how many times this template was used (assigned)
-                    int assigned = 0;
-                    for (Ticket t : allTickets) {
-                        if (t.getAttendeeId() != null &&
-                            t.getEventId().equals(ticket.getEventId()) &&
-                            t.getSessionId().equals(ticket.getSessionId()) &&
-                            t.getType().equals(ticket.getType()) &&
-                            t.getPrice().equals(ticket.getPrice())) {
-                            assigned++;
-                        }
-                    }
-
-                    int available = 100 - assigned;
-
-                    allTemplates.add(new TemplateRow(
+            }
+            if (context.sessionRepo != null) {
+                for (Session sess : context.sessionRepo.findAll()) {
+                    sessionNameCache.put(sess.getId(), sess.getTitle());
+                }
+            }
+            Map<TemplateKey, Integer> assignedCountMap = new HashMap<>();
+            for (Ticket t : assignedTickets) {
+                TemplateKey key = new TemplateKey(t.getEventId(), t.getSessionId(), t.getType(), t.getPrice());
+                assignedCountMap.merge(key, 1, Integer::sum);
+            }
+            for (Ticket ticket : templateTickets) {
+                String eventName = ticket.getEventId() != null
+                        ? eventNameCache.getOrDefault(ticket.getEventId(), "Unknown")
+                        : "Unknown";
+                String sessionName = ticket.getSessionId() != null
+                        ? sessionNameCache.getOrDefault(ticket.getSessionId(), "Unknown")
+                        : "Unknown";
+                TemplateKey key = new TemplateKey(ticket.getEventId(), ticket.getSessionId(), ticket.getType(), ticket.getPrice());
+                int assigned = assignedCountMap.getOrDefault(key, 0);
+                int available = 100 - assigned;
+                result.add(new TemplateRow(
                         eventName,
                         sessionName,
                         ticket.getType() != null ? ticket.getType().name() : "N/A",
                         ticket.getPrice() != null ? "$" + ticket.getPrice() : "$0",
                         String.valueOf(available)
-                    ));
-                }
+                ));
             }
-
-            displayTemplates(allTemplates);
-
         } catch (Exception e) {
-            System.err.println("Error loading templates: " + e.getMessage());
+            System.err.println("Error loading templates (optimized): " + e.getMessage());
+            e.printStackTrace();
+        }
+        return result;
+    }
+
+    // Khoá template để đếm assigned (eventId + sessionId + type + price)
+    private static final class TemplateKey {
+        private final UUID eventId;
+        private final UUID sessionId;
+        private final TicketType type;
+        private final BigDecimal price;
+
+        private TemplateKey(UUID eventId, UUID sessionId, TicketType type, BigDecimal price) {
+            this.eventId = eventId;
+            this.sessionId = sessionId;
+            this.type = type;
+            this.price = price;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof TemplateKey key)) return false;
+            return Objects.equals(eventId, key.eventId) &&
+                   Objects.equals(sessionId, key.sessionId) &&
+                   type == key.type &&
+                   Objects.equals(price, key.price);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(eventId, sessionId, type, price);
         }
     }
 
@@ -283,7 +362,8 @@ public class TicketManagerController {
                     ticketRepo.save(template);
                     showAlert("Success", "Ticket template created successfully!");
                     templatePriceField.clear();
-                    loadTemplates();
+                    // trước đây gọi loadTemplates(); (hàm cũ), giờ dùng bản async tối ưu
+                    loadTemplatesAsync();
                 } catch (Exception saveEx) {
                     System.err.println("Ticket save error: " + saveEx.getMessage());
                     saveEx.printStackTrace();
@@ -377,109 +457,71 @@ public class TicketManagerController {
 
         Task<AssignedTicketsData> task = new Task<>() {
             @Override
-            protected AssignedTicketsData call() throws Exception {
+            protected AssignedTicketsData call() {
                 List<TicketRow> tickets = new ArrayList<>();
-                List<Ticket> allTickets = new ArrayList<>();
-
+                List<Ticket> assignedTickets = new ArrayList<>();
                 try {
-                    if (ticketRepo == null) {
-                        return new AssignedTicketsData(tickets, allTickets);
-                    }
-
-                    // OPTIMIZATION 1: Batch load all data at once
-                    updateMessage("Loading data...");
-                    allTickets = ticketRepo.findAll();
-
+                    if (ticketRepo == null) return new AssignedTicketsData(tickets, assignedTickets);
+                    int offset = currentAssignedPage * PAGE_SIZE;
+                    assignedTickets = ticketRepo.findAssignedPage(offset, PAGE_SIZE);
                     AppContext context = AppContext.get();
-
-                    // OPTIMIZATION 2: Cache all related entities (single query each)
                     Map<UUID, Attendee> attendeeCache = new HashMap<>();
                     Map<UUID, Event> eventCache = new HashMap<>();
                     Map<UUID, Session> sessionCache = new HashMap<>();
-
-                    // Pre-load all attendees, events, sessions into cache
-                    updateMessage("Building cache...");
                     if (context.attendeeRepo != null) {
-                        List<Attendee> allAttendees = context.attendeeRepo.findAll();
-                        for (Attendee att : allAttendees) {
+                        for (Attendee att : context.attendeeRepo.findAll()) {
                             attendeeCache.put(att.getId(), att);
                         }
                     }
-
                     if (context.eventRepo != null) {
-                        List<Event> allEvents = context.eventRepo.findAll();
-                        for (Event evt : allEvents) {
+                        for (Event evt : context.eventRepo.findAll()) {
                             eventCache.put(evt.getId(), evt);
                         }
                     }
-
                     if (context.sessionRepo != null) {
-                        List<Session> allSessions = context.sessionRepo.findAll();
-                        for (Session sess : allSessions) {
+                        for (Session sess : context.sessionRepo.findAll()) {
                             sessionCache.put(sess.getId(), sess);
                         }
                     }
-
-                    updateMessage("Processing " + allTickets.size() + " tickets...");
-
-                    // OPTIMIZATION 3: Filter only assigned tickets + use cache for O(1) lookup
-                    int processedCount = 0;
-                    for (Ticket ticket : allTickets) {
-                        // Only process assigned tickets (has attendeeId)
-                        if (ticket.getAttendeeId() != null) {
-                            String attendeeName = "Unknown";
-                            String eventName = "Unknown";
-                            String sessionName = "Unknown";
-
-                            // Use cached data instead of findById()
-                            Attendee att = attendeeCache.get(ticket.getAttendeeId());
-                            if (att != null) attendeeName = att.getFullName();
-
-                            Event evt = eventCache.get(ticket.getEventId());
-                            if (evt != null) eventName = evt.getName();
-
-                            Session sess = sessionCache.get(ticket.getSessionId());
-                            if (sess != null) sessionName = sess.getTitle();
-
-                            tickets.add(new TicketRow(
-                                    ticket.getId().toString().substring(0, 8),
-                                    attendeeName,
-                                    eventName,
-                                    sessionName,
-                                    ticket.getType() != null ? ticket.getType().name() : "N/A",
-                                    ticket.getPrice() != null ? "$" + ticket.getPrice() : "$0",
-                                    ticket.getTicketStatus() != null ? ticket.getTicketStatus().name() : "N/A"
-                            ));
-
-                            processedCount++;
-                            if (processedCount % 50 == 0) {
-                                updateMessage("Processed " + processedCount + " tickets...");
-                            }
-                        }
+                    int processed = 0;
+                    for (Ticket ticket : assignedTickets) {
+                        String attendeeName = "Unknown";
+                        String eventName = "Unknown";
+                        String sessionName = "Unknown";
+                        Attendee att = attendeeCache.get(ticket.getAttendeeId());
+                        if (att != null) attendeeName = att.getFullName();
+                        Event evt = eventCache.get(ticket.getEventId());
+                        if (evt != null) eventName = evt.getName();
+                        Session sess = sessionCache.get(ticket.getSessionId());
+                        if (sess != null) sessionName = sess.getTitle();
+                        tickets.add(new TicketRow(
+                                ticket.getId().toString().substring(0, 8),
+                                attendeeName,
+                                eventName,
+                                sessionName,
+                                ticket.getType() != null ? ticket.getType().name() : "N/A",
+                                ticket.getPrice() != null ? "$" + ticket.getPrice() : "$0",
+                                ticket.getTicketStatus() != null ? ticket.getTicketStatus().name() : "N/A"
+                        ));
+                        processed++;
+                        if (processed % 50 == 0) updateMessage("Processed " + processed + " tickets...");
                     }
-
                     updateMessage("Done! " + tickets.size() + " assigned tickets loaded");
-
                 } catch (Exception e) {
                     System.err.println("❌ Error loading assigned tickets: " + e.getMessage());
                     e.printStackTrace();
                 }
-
-                return new AssignedTicketsData(tickets, allTickets);
+                return new AssignedTicketsData(tickets, assignedTickets);
             }
         };
 
         task.setOnSucceeded(event -> {
             AssignedTicketsData data = task.getValue();
             allAssignedTickets = data.tickets;
-
-            // Update UI on FX thread
             loadAttendees();
             displayAssignedTickets(allAssignedTickets);
             loadTemplatesForAssign(data.allTickets);
             calculateStatistics();
-
-            System.out.println("✓ Assigned tickets loaded in " + assignedCountLabel.getText());
         });
 
         task.setOnFailed(event -> {
@@ -488,7 +530,6 @@ public class TicketManagerController {
             assignedCountLabel.setText("Error loading data");
         });
 
-        // Run in background thread
         Thread bgThread = new Thread(task);
         bgThread.setDaemon(true);
         bgThread.start();
@@ -612,6 +653,44 @@ public class TicketManagerController {
         alert.setTitle(title);
         alert.setContentText(message);
         alert.showAndWait();
+    }
+
+    // Handlers cho pagination templates
+    @FXML
+    private void onTemplatesPrevPage() {
+        if (currentTemplatePage > 0) {
+            currentTemplatePage--;
+            updateTemplatesPageLabel();
+            loadTemplatesAsync();
+        }
+    }
+
+    @FXML
+    private void onTemplatesNextPage() {
+        if (currentTemplatePage + 1 < totalTemplatePages) {
+            currentTemplatePage++;
+            updateTemplatesPageLabel();
+            loadTemplatesAsync();
+        }
+    }
+
+    // Handlers cho pagination assigned tickets
+    @FXML
+    private void onAssignedPrevPage() {
+        if (currentAssignedPage > 0) {
+            currentAssignedPage--;
+            updateAssignedPageLabel();
+            loadAssignedTickets();
+        }
+    }
+
+    @FXML
+    private void onAssignedNextPage() {
+        if (currentAssignedPage + 1 < totalAssignedPages) {
+            currentAssignedPage++;
+            updateAssignedPageLabel();
+            loadAssignedTickets();
+        }
     }
 
     public static class TemplateRow {

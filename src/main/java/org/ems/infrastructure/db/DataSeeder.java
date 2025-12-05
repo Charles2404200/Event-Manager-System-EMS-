@@ -13,6 +13,17 @@ import java.util.UUID;
  */
 public class DataSeeder {
 
+    public static void main(String[] args) {
+        System.out.println("\n╔════════════════════════════════════════╗");
+        System.out.println("║   Event Manager System - Data Seeder   ║");
+        System.out.println("╚════════════════════════════════════════╝\n");
+
+        seedAdminUser();
+        seedSampleData();
+
+        System.out.println("\n✅ Data seeding completed successfully!\n");
+    }
+
     public static void seedAdminUser() {
         try (Connection conn = DatabaseConfig.getConnection()) {
             // Check if admin already exists
@@ -89,21 +100,32 @@ public class DataSeeder {
                 "frank_miller,Frank Miller,frank@example.com,+84901234574",
             };
 
+            String checkQuery = "SELECT id FROM persons WHERE username = ?";
             String personQuery = """
                     INSERT INTO persons (id, full_name, dob, email, phone, username, password_hash, role, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
-                    ON CONFLICT DO NOTHING
                     """;
 
             String attendeeQuery = """
                     INSERT INTO attendees (id, activity_history)
                     VALUES (?, '[]')
-                    ON CONFLICT DO NOTHING
                     """;
 
             int addedCount = 0;
             for (String data : attendees) {
                 String[] parts = data.split(",");
+                String username = parts[0];
+
+                // Check if already exists
+                boolean exists = false;
+                try (PreparedStatement checkStmt = conn.prepareStatement(checkQuery)) {
+                    checkStmt.setString(1, username);
+                    ResultSet rs = checkStmt.executeQuery();
+                    exists = rs.next();
+                }
+
+                if (exists) continue;
+
                 UUID id = UUID.randomUUID();
 
                 try (PreparedStatement personStmt = conn.prepareStatement(personQuery)) {
@@ -112,7 +134,7 @@ public class DataSeeder {
                     personStmt.setObject(3, LocalDate.of(1995, 1, 1));
                     personStmt.setString(4, parts[2]);
                     personStmt.setString(5, parts[3]);
-                    personStmt.setString(6, parts[0]);
+                    personStmt.setString(6, username);
                     personStmt.setString(7, "password123");
                     personStmt.setString(8, "ATTENDEE");
                     int personRows = personStmt.executeUpdate();
@@ -137,29 +159,40 @@ public class DataSeeder {
     private static void seedPresenters(Connection conn) {
         try {
             String[] presenters = {
-                "dr_smith,Dr. Smith,Senior Developer,smith@example.com,+84902234567",
-                "prof_jones,Prof. Jones,Tech Lead,jones@example.com,+84902234568",
-                "engineer_lee,Lee Chen,Software Engineer,lee@example.com,+84902234569",
-                "architect_kim,Kim Park,Solution Architect,kim@example.com,+84902234570",
-                "consultant_nguyen,Nguyen Minh,Tech Consultant,nguyen@example.com,+84902234571",
-                "master_tran,Tran Anh,Full Stack Master,tran@example.com,+84902234572",
+                "dr_smith,Dr. Smith,KEYNOTE_SPEAKER,smith@example.com,+84902234567",
+                "prof_jones,Prof. Jones,PANELIST,jones@example.com,+84902234568",
+                "engineer_lee,Lee Chen,MODERATOR,lee@example.com,+84902234569",
+                "architect_kim,Kim Park,GUEST,kim@example.com,+84902234570",
+                "consultant_nguyen,Nguyen Minh,KEYNOTE_SPEAKER,nguyen@example.com,+84902234571",
+                "master_tran,Tran Anh,PANELIST,tran@example.com,+84902234572",
             };
 
+            String checkQuery = "SELECT id FROM persons WHERE username = ?";
             String personQuery = """
                     INSERT INTO persons (id, full_name, dob, email, phone, username, password_hash, role, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
-                    ON CONFLICT DO NOTHING
                     """;
 
             String presenterQuery = """
-                    INSERT INTO presenters (id, role)
+                    INSERT INTO presenters (id, presenter_type)
                     VALUES (?, ?)
-                    ON CONFLICT DO NOTHING
                     """;
 
             int addedCount = 0;
             for (String data : presenters) {
                 String[] parts = data.split(",");
+                String username = parts[0];
+
+                // Check if already exists
+                boolean exists = false;
+                try (PreparedStatement checkStmt = conn.prepareStatement(checkQuery)) {
+                    checkStmt.setString(1, username);
+                    ResultSet rs = checkStmt.executeQuery();
+                    exists = rs.next();
+                }
+
+                if (exists) continue;
+
                 UUID id = UUID.randomUUID();
 
                 try (PreparedStatement personStmt = conn.prepareStatement(personQuery)) {
@@ -168,7 +201,7 @@ public class DataSeeder {
                     personStmt.setObject(3, LocalDate.of(1980, 1, 1));
                     personStmt.setString(4, parts[3]);
                     personStmt.setString(5, parts[4]);
-                    personStmt.setString(6, parts[0]);
+                    personStmt.setString(6, username);
                     personStmt.setString(7, "password123");
                     personStmt.setString(8, "PRESENTER");
                     int personRows = personStmt.executeUpdate();
@@ -198,33 +231,75 @@ public class DataSeeder {
                     VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
                     """;
 
-            Object[][] events = {
-                {"Tech Conference 2025", "CONFERENCE", "Hanoi Convention Center", LocalDate.of(2025, 12, 10), LocalDate.of(2025, 12, 12), "SCHEDULED"},
-                {"Web Development Workshop", "WORKSHOP", "Da Nang Tech Hub", LocalDate.of(2025, 12, 15), LocalDate.of(2025, 12, 16), "SCHEDULED"},
-                {"AI & Machine Learning Summit", "CONFERENCE", "Ho Chi Minh City Arena", LocalDate.of(2025, 12, 20), LocalDate.of(2025, 12, 22), "SCHEDULED"},
-                {"Cloud Computing Seminar", "SEMINAR", "Hanoi Business Center", LocalDate.of(2025, 12, 25), LocalDate.of(2025, 12, 25), "SCHEDULED"},
-                {"Java Enterprise Development", "WORKSHOP", "Da Nang Tech Hub", LocalDate.of(2026, 1, 5), LocalDate.of(2026, 1, 7), "SCHEDULED"},
-                {"DevOps Best Practices", "WORKSHOP", "Ho Chi Minh City Hub", LocalDate.of(2026, 1, 10), LocalDate.of(2026, 1, 12), "SCHEDULED"},
-                {"React Advanced Patterns", "SEMINAR", "Hanoi Tech Center", LocalDate.of(2026, 1, 15), LocalDate.of(2026, 1, 15), "SCHEDULED"},
-                {"Mobile Development Summit", "CONFERENCE", "Da Nang Arena", LocalDate.of(2026, 1, 20), LocalDate.of(2026, 1, 22), "SCHEDULED"},
+            // Event templates
+            String[] eventNames = {
+                "Tech Conference", "Web Development Workshop", "AI & Machine Learning Summit",
+                "Cloud Computing Seminar", "Java Enterprise Development", "DevOps Best Practices",
+                "React Advanced Patterns", "Mobile Development Summit", "Python Mastery",
+                "Microservices Architecture", "Kubernetes Deep Dive", "Docker Essentials",
+                "GraphQL Advanced Techniques", "Vue.js Expert Training", "Angular Professional",
+                "Node.js Performance Tuning", "TypeScript Masterclass", "Front-End Excellence",
+                "Backend Development Bootcamp", "Full Stack Engineering", "Cybersecurity Summit",
+                "Data Science Conference", "Big Data Analytics", "Machine Learning Ops",
+                "Blockchain Technology", "Cryptocurrency Fundamentals", "Smart Contracts",
+                "Web3 Development", "NFT & DeFi Summit", "Cloud Architecture",
+                "AWS Solutions", "Azure Masterclass", "GCP Advanced Features",
+                "Database Design", "SQL Performance", "NoSQL Databases",
+                "PostgreSQL Advanced", "MongoDB Mastery", "Redis Optimization",
+                "ElasticSearch Advanced", "API Design Best Practices", "REST API Mastery",
+                "Testing Strategies", "Quality Assurance Summit", "Agile Methodology",
+                "Scrum Master Workshop", "DevOps Pipeline", "CI/CD Excellence",
+                "Git Workflow Advanced", "Linux Administration", "System Design",
+                "Software Architecture", "Design Patterns", "Clean Code Principles",
+                "Refactoring Techniques", "Performance Optimization", "Memory Management",
+                "Concurrency Programming", "Parallel Processing", "Distributed Systems",
+                "Load Balancing Strategies", "Database Scaling", "Caching Techniques",
+                "Message Queues", "Event Streaming", "Real-time Applications",
+                "WebSocket Programming", "Mobile App Development", "iOS Development",
+                "Android Development", "React Native Mastery", "Flutter Advanced",
+                "Cross-platform Development", "Progressive Web Apps", "Responsive Design",
+                "UX/UI Principles", "User Experience Design", "Accessibility Standards",
+                "Performance Metrics", "Monitoring & Logging", "Observability",
+                "Open Source Contribution", "Community Building", "Tech Leadership",
+                "Career Development", "Interview Preparation", "Salary Negotiation",
+                "Freelancing Guide", "Remote Work Best Practices", "Team Collaboration",
+                "Communication Skills", "Presentation Mastery", "Technical Writing"
+            };
+
+            String[] types = {"CONFERENCE", "WORKSHOP", "SEMINAR", "EXHIBITION", "CONCERT"};
+            String[] locations = {
+                "Hanoi Convention Center", "Da Nang Tech Hub", "Ho Chi Minh City Arena",
+                "Hanoi Business Center", "Da Nang Arena", "Ho Chi Minh City Hub",
+                "Hanoi Tech Center", "Da Nang Conference Hall", "HCMC Tech Park",
+                "Hanoi International Center", "Da Nang Summit Hall", "HCMC Convention"
             };
 
             int addedCount = 0;
-            for (Object[] event : events) {
+            LocalDate startDate = LocalDate.of(2025, 12, 10);
+
+            // Generate 100 events
+            for (int i = 0; i < 100; i++) {
+                String eventName = eventNames[i % eventNames.length] + " #" + (i + 1);
+                String type = types[i % types.length];
+                String location = locations[i % locations.length];
+                LocalDate eventStart = startDate.plusDays(i / 2);
+                LocalDate eventEnd = eventStart.plusDays((i % 3) + 1);
+                String status = (i % 5 == 0) ? "COMPLETED" : (i % 3 == 0) ? "ONGOING" : "SCHEDULED";
+
                 try (PreparedStatement stmt = conn.prepareStatement(eventQuery)) {
                     stmt.setObject(1, UUID.randomUUID());
-                    stmt.setString(2, (String) event[0]);
-                    stmt.setString(3, (String) event[1]);
-                    stmt.setString(4, (String) event[2]);
-                    stmt.setObject(5, event[3]);
-                    stmt.setObject(6, event[4]);
-                    stmt.setString(7, (String) event[5]);
+                    stmt.setString(2, eventName);
+                    stmt.setString(3, type);
+                    stmt.setString(4, location);
+                    stmt.setObject(5, eventStart);
+                    stmt.setObject(6, eventEnd);
+                    stmt.setString(7, status);
                     int rows = stmt.executeUpdate();
                     if (rows > 0) addedCount++;
                 }
             }
 
-            System.out.println(" ✓ Added " + addedCount + " new events (total: " + events.length + ")");
+            System.out.println(" ✓ Added " + addedCount + " new events (total: 100)");
 
         } catch (Exception e) {
             System.err.println(" Error seeding events: " + e.getMessage());
@@ -233,64 +308,140 @@ public class DataSeeder {
 
     private static void seedSessions(Connection conn) {
         try {
-            // Get event IDs
-            String getEventsQuery = "SELECT id, name FROM events ORDER BY created_at DESC LIMIT 8";
-            java.util.List<Object[]> eventsList = new java.util.ArrayList<>();
+            // Get all event IDs
+            String getEventsQuery = "SELECT id FROM events ORDER BY created_at DESC LIMIT 100";
+            java.util.List<UUID> eventIds = new java.util.ArrayList<>();
             try (PreparedStatement stmt = conn.prepareStatement(getEventsQuery)) {
                 ResultSet rs = stmt.executeQuery();
                 while (rs.next()) {
-                    eventsList.add(new Object[]{rs.getObject("id"), rs.getString("name")});
+                    eventIds.add((UUID) rs.getObject("id"));
                 }
             }
 
-            if (eventsList.isEmpty()) {
+            if (eventIds.isEmpty()) {
                 System.out.println(" No events found for seeding sessions");
                 return;
             }
 
             String sessionQuery = """
-                    INSERT INTO sessions (id, event_id, title, description, start, end, venue, capacity, created_at)
+                    INSERT INTO sessions (id, event_id, title, description, start_time, end_time, venue, capacity, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
                     """;
 
-            Object[][] sessionData = {
-                {"Opening Keynote", "Industry trends and future of technology", "Main Hall", 500},
-                {"Web Development Best Practices", "Modern web development techniques", "Room 101", 100},
-                {"Cloud Infrastructure Deep Dive", "AWS, Azure, and GCP comparison", "Room 202", 80},
-                {"AI Workshop", "Hands-on machine learning", "Lab Room", 50},
-                {"Networking Session", "Meet fellow developers and professionals", "Main Hall", 200},
-                {"Advanced Java Patterns", "Design patterns in enterprise apps", "Room 301", 60},
-                {"Database Optimization", "Performance tuning strategies", "Room 302", 70},
-                {"DevOps & CI/CD Pipeline", "Automation and deployment strategies", "Room 303", 65},
-                {"Kubernetes Mastery", "Container orchestration deep dive", "Room 304", 55},
-                {"Microservices Architecture", "Building scalable systems", "Room 305", 65},
-                {"Security Best Practices", "Web application security", "Room 306", 75},
-                {"Performance Tuning", "Optimizing application performance", "Room 307", 60},
+            // Session templates (200+)
+            String[] sessionTitles = {
+                "Opening Keynote", "Web Development Best Practices", "Cloud Infrastructure Deep Dive",
+                "AI Workshop", "Networking Session", "Advanced Java Patterns", "Database Optimization",
+                "DevOps & CI/CD Pipeline", "Kubernetes Mastery", "Microservices Architecture",
+                "Security Best Practices", "Performance Tuning", "Code Review Session", "Testing Strategies",
+                "Agile Retrospective", "Scrum Planning", "Git Advanced Workflows", "Linux Essentials",
+                "System Design Principles", "Software Architecture Patterns", "Design Patterns Workshop",
+                "Clean Code Principles", "Refactoring Practice Session", "Memory Management",
+                "Concurrency Programming", "Parallel Processing Basics", "Distributed Systems",
+                "Load Balancing Techniques", "Database Scaling Strategies", "Caching Best Practices",
+                "Message Queue Systems", "Event Streaming Basics", "Real-time Applications",
+                "WebSocket Implementation", "Mobile Development Basics", "iOS Workshop",
+                "Android Development", "React Native Bootcamp", "Flutter Introduction",
+                "Cross-platform Solutions", "Progressive Web Apps", "Responsive Design Patterns",
+                "UX/UI Fundamentals", "User Experience Optimization", "Accessibility Compliance",
+                "Performance Metrics", "Monitoring & Logging", "Observability Practices",
+                "Open Source Contribution", "Community Engagement", "Tech Leadership",
+                "Career Planning", "Interview Preparation", "Salary Negotiation",
+                "Freelancing Workshop", "Remote Work Best Practices", "Team Collaboration",
+                "Communication Skills", "Presentation Training", "Technical Writing",
+                "API Design Masterclass", "REST API Best Practices", "GraphQL Advanced",
+                "Frontend Optimization", "Backend Performance", "Full Stack Development",
+                "Deployment Strategies", "Infrastructure as Code", "Container Orchestration",
+                "Serverless Architecture", "Microservices Patterns", "Event-Driven Design",
+                "Database Modeling", "SQL Advanced Queries", "NoSQL Patterns",
+                "Search Engine Optimization", "Analytics Implementation", "Data Visualization",
+                "Machine Learning Basics", "Deep Learning Introduction", "NLP Workshop",
+                "Computer Vision", "Reinforcement Learning", "TensorFlow Masterclass",
+                "PyTorch Advanced", "Data Pipeline Design", "ETL Processes",
+                "Data Quality Assurance", "Compliance & Regulations", "Security Hardening",
+                "Encryption & Hashing", "Authentication & Authorization", "OWASP Top 10",
+                "Penetration Testing", "Vulnerability Assessment", "Security Auditing",
+                "Incident Response", "Disaster Recovery", "Business Continuity",
+                "Cloud Migration", "Hybrid Cloud Strategy", "Multi-cloud Architecture",
+                "Cost Optimization", "Resource Management", "Performance Benchmarking",
+                "Load Testing", "Stress Testing", "Chaos Engineering",
+                "Monitoring & Alerting", "Log Management", "Distributed Tracing",
+                "APM Tools", "Metrics Collection", "Time Series Databases",
+                "Version Control Strategies", "Branching Models", "Merge Strategies",
+                "Code Quality", "Static Analysis", "Dynamic Analysis",
+                "Unit Testing", "Integration Testing", "End-to-End Testing",
+                "Test Automation", "BDD & TDD", "Continuous Testing",
+                "Agile Transformation", "Kanban Practices", "Lean Methodology",
+                "SAFe Framework", "DevOps Culture", "Cross-functional Teams",
+                "Product Management", "Requirements Gathering", "User Stories",
+                "Feature Planning", "Release Management", "Sprint Planning",
+                "Daily Standup", "Sprint Review", "Sprint Retrospective",
+                "Technical Debt", "Architecture Review", "Design Review",
+                "Code Review Best Practices", "Peer Programming", "Mob Programming",
+                "Continuous Improvement", "Metrics & KPIs", "Business Alignment",
+                "Stakeholder Management", "Risk Management", "Quality Metrics",
+                "Velocity Tracking", "Burndown Charts", "Release Planning",
+                "Roadmap Planning", "Strategic Alignment", "OKR Framework",
+                "Leadership Skills", "Decision Making", "Problem Solving",
+                "Conflict Resolution", "Change Management", "Innovation",
+                "Mentoring & Coaching", "Delegation", "Performance Management",
+                "Feedback Loops", "Continuous Learning", "Knowledge Sharing",
+                "Documentation", "Knowledge Management", "Best Practices",
+                "Lessons Learned", "Post-mortems", "Root Cause Analysis",
+                "Retrospectives", "Forward Planning", "Goal Setting"
+            };
+
+            String[] venues = {
+                "Main Hall", "Room 101", "Room 102", "Room 201", "Room 202", "Room 203",
+                "Lab Room", "Conference Room A", "Conference Room B", "Auditorium",
+                "Breakout Room 1", "Breakout Room 2", "Breakout Room 3", "Networking Area",
+                "Workshop Space", "Studio A", "Studio B", "Demo Area", "Theater Room",
+                "Board Room", "Executive Suite", "Innovation Lab"
+            };
+
+            String[] descriptions = {
+                "Hands-on practical training", "Expert insights and strategies", "Advanced techniques workshop",
+                "Beginner to intermediate level", "Best practices and case studies", "Deep dive into technology",
+                "Live coding session", "Interactive Q&A", "Networking opportunity", "Group discussion",
+                "Problem-solving session", "Case study analysis", "Demonstration and tutorial",
+                "Mentoring session", "Breakout group discussion", "Working session", "Practical exercise"
             };
 
             int sessionCount = 0;
-            for (int i = 0; i < sessionData.length; i++) {
-                Object[] session = sessionData[i];
-                Object eventId = eventsList.get(i % eventsList.size())[0];
+            int sessionsPerEvent = 2; // 2 sessions per event = ~200 sessions for 100 events
 
-                LocalDateTime startTime = LocalDateTime.of(2025, 12, 10 + (i / 3), 9 + (i % 3) * 3, 0);
-                LocalDateTime endTime = startTime.plusHours(1).plusMinutes(30);
+            for (int eventIdx = 0; eventIdx < eventIds.size(); eventIdx++) {
+                UUID eventId = eventIds.get(eventIdx);
 
-                try (PreparedStatement stmt = conn.prepareStatement(sessionQuery)) {
-                    stmt.setObject(1, UUID.randomUUID());
-                    stmt.setObject(2, eventId);
-                    stmt.setString(3, (String) session[0]);
-                    stmt.setString(4, (String) session[1]);
-                    stmt.setObject(5, startTime);
-                    stmt.setObject(6, endTime);
-                    stmt.setString(7, (String) session[2]);
-                    stmt.setInt(8, (Integer) session[3]);
-                    int rows = stmt.executeUpdate();
-                    if (rows > 0) sessionCount++;
+                for (int sessionIdx = 0; sessionIdx < sessionsPerEvent; sessionIdx++) {
+                    int titleIdx = (eventIdx * sessionsPerEvent + sessionIdx) % sessionTitles.length;
+                    String title = sessionTitles[titleIdx];
+                    String description = descriptions[(eventIdx + sessionIdx) % descriptions.length];
+                    String venue = venues[(eventIdx + sessionIdx) % venues.length];
+                    int capacity = 50 + (eventIdx % 4) * 25; // 50, 75, 100, 125
+
+                    // Fix: Calculate day properly - use modulo to stay within month bounds
+                    int dayOffset = (eventIdx / 4) % 20; // 0-19 days (safe for any month)
+                    int hour = 9 + (sessionIdx * 2);
+                    LocalDateTime startTime = LocalDateTime.of(2025, 12, 10 + dayOffset, hour, 0);
+                    LocalDateTime endTime = startTime.plusHours(1).plusMinutes(30);
+
+                    try (PreparedStatement stmt = conn.prepareStatement(sessionQuery)) {
+                        stmt.setObject(1, UUID.randomUUID());
+                        stmt.setObject(2, eventId);
+                        stmt.setString(3, title + " - " + (sessionIdx + 1));
+                        stmt.setString(4, description);
+                        stmt.setObject(5, startTime);
+                        stmt.setObject(6, endTime);
+                        stmt.setString(7, venue);
+                        stmt.setInt(8, capacity);
+                        int rows = stmt.executeUpdate();
+                        if (rows > 0) sessionCount++;
+                    }
                 }
             }
 
-            System.out.println(" ✓ Added " + sessionCount + " new sessions (total: " + sessionData.length + ")");
+            System.out.println(" ✓ Added " + sessionCount + " new sessions");
 
         } catch (Exception e) {
             System.err.println(" Error seeding sessions: " + e.getMessage());
@@ -300,7 +451,7 @@ public class DataSeeder {
     private static void seedTickets(Connection conn) {
         try {
             // Get attendee and session IDs
-            String attendeesQuery = "SELECT id FROM attendees LIMIT 10";
+            String attendeesQuery = "SELECT id FROM attendees";
             java.util.List<UUID> attendeeIds = new java.util.ArrayList<>();
             try (PreparedStatement stmt = conn.prepareStatement(attendeesQuery)) {
                 ResultSet rs = stmt.executeQuery();
@@ -309,7 +460,7 @@ public class DataSeeder {
                 }
             }
 
-            String sessionsQuery = "SELECT id, event_id FROM sessions ORDER BY created_at DESC LIMIT 12";
+            String sessionsQuery = "SELECT id, event_id FROM sessions";
             java.util.List<Object[]> sessionIds = new java.util.ArrayList<>();
             try (PreparedStatement stmt = conn.prepareStatement(sessionsQuery)) {
                 ResultSet rs = stmt.executeQuery();
@@ -332,7 +483,8 @@ public class DataSeeder {
             double[] prices = {50.0, 100.0, 30.0, 25.0};
 
             int ticketCount = 0;
-            for (int i = 0; i < attendeeIds.size() * 4; i++) {
+            // Create multiple tickets per attendee-session pair for realistic data
+            for (int i = 0; i < attendeeIds.size() * 30; i++) {
                 UUID attendeeId = attendeeIds.get(i % attendeeIds.size());
                 Object[] sessionData = sessionIds.get(i % sessionIds.size());
                 UUID sessionId = (UUID) sessionData[0];

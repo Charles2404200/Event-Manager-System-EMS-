@@ -35,6 +35,13 @@ public class MainApp extends Application {
 
             primaryStage.setTitle("Event Manager System - Home");
             primaryStage.setScene(scene);
+
+            // Handle window close event for graceful shutdown
+            primaryStage.setOnCloseRequest(event -> {
+                System.out.println(" Application closing...");
+                AppContext.get().shutdown();
+            });
+
             primaryStage.show();
 
             System.out.println(" Home Screen Loaded Successfully!");
@@ -46,7 +53,5 @@ public class MainApp extends Application {
         }
     }
 
-    static void main(String[] args) {
-        launch(args);
-    }
+    // ...existing code...
 }
