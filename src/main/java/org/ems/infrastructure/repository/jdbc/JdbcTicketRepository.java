@@ -349,6 +349,59 @@ public class JdbcTicketRepository implements TicketRepository {
         }
     }
 
+    @Override
+    public long countTemplates() {
+        String sql = "SELECT COUNT(*) FROM tickets WHERE attendee_id IS NULL";
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(sql)) {
+            return rs.next() ? rs.getLong(1) : 0L;
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to count template tickets", e);
+        }
+    }
+
+    @Override
+    public long countAssigned() {
+        String sql = "SELECT COUNT(*) FROM tickets WHERE attendee_id IS NOT NULL";
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(sql)) {
+            return rs.next() ? rs.getLong(1) : 0L;
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to count assigned tickets", e);
+        }
+    }
+
+    @Override
+    public List<TemplateAssignmentStats> findAssignedStatsForTemplates() {
+        String sql = """
+                SELECT event_id,
+                       session_id,
+                       type,
+                       price,
+                       COUNT(*) AS assigned_count
+                FROM tickets
+                WHERE attendee_id IS NOT NULL
+                GROUP BY event_id, session_id, type, price
+                """;
+
+        List<TemplateAssignmentStats> stats = new ArrayList<>();
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(sql)) {
+            while (rs.next()) {
+                UUID eventId = (UUID) rs.getObject("event_id");
+                UUID sessionId = (UUID) rs.getObject("session_id");
+                String typeStr = rs.getString("type");
+                TicketType type = typeStr != null ? TicketType.valueOf(typeStr.toUpperCase()) : TicketType.GENERAL;
+                java.math.BigDecimal price = rs.getBigDecimal("price");
+                long assignedCount = rs.getLong("assigned_count");
+                stats.add(new TemplateAssignmentStats(eventId, sessionId, type, price, assignedCount));
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to load assigned stats for templates", e);
+        }
+        return stats;
+    }
+
     // ---------------------------------------------------------
     // MAPPER
     // ---------------------------------------------------------

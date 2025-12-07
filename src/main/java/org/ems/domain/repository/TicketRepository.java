@@ -36,6 +36,16 @@ public interface TicketRepository {
     long count();
 
     /**
+     * Returns total number of template tickets (attendee_id IS NULL).
+     */
+    long countTemplates();
+
+    /**
+     * Returns total number of assigned tickets (attendee_id IS NOT NULL).
+     */
+    long countAssigned();
+
+    /**
      * Find ticket templates: tickets chưa gán attendee (attendee_id IS NULL).
      */
     List<Ticket> findTemplates();
@@ -54,4 +64,37 @@ public interface TicketRepository {
      * Assigned tickets phân trang.
      */
     List<Ticket> findAssignedPage(int offset, int limit);
+
+    /**
+     * Aggregate số lượng vé đã assign theo template key (event, session, type, price).
+     * Có thể dùng để tính "available" mà không cần load toàn bộ danh sách assigned vào memory.
+     */
+    List<TemplateAssignmentStats> findAssignedStatsForTemplates();
+
+    /**
+     * Projection đơn giản cho aggregate assigned tickets.
+     */
+    final class TemplateAssignmentStats {
+        private final UUID eventId;
+        private final UUID sessionId;
+        private final TicketType type;
+        private final java.math.BigDecimal price;
+        private final long assignedCount;
+
+        public TemplateAssignmentStats(UUID eventId, UUID sessionId,
+                                       TicketType type, java.math.BigDecimal price,
+                                       long assignedCount) {
+            this.eventId = eventId;
+            this.sessionId = sessionId;
+            this.type = type;
+            this.price = price;
+            this.assignedCount = assignedCount;
+        }
+
+        public UUID getEventId() { return eventId; }
+        public UUID getSessionId() { return sessionId; }
+        public TicketType getType() { return type; }
+        public java.math.BigDecimal getPrice() { return price; }
+        public long getAssignedCount() { return assignedCount; }
+    }
 }

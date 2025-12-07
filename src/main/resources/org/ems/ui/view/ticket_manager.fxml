@@ -69,7 +69,7 @@
             </Tab>
 
             <!-- TAB 2: Assign Tickets -->
-            <Tab text="Assign Tickets" closable="false">
+            <Tab text="Assign Tickets" closable="false" onSelectionChanged="#onAssignedTabSelected">
                 <VBox spacing="15" style="-fx-padding: 20;">
 
                     <Label text="Assign Tickets to Attendees" style="-fx-font-size: 14; -fx-font-weight: bold;"/>

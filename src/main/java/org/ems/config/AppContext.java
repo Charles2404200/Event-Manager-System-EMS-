@@ -35,6 +35,7 @@ public class AppContext {
     public final PresenterRepository presenterRepo;
     public final TicketRepository ticketRepo;
     public final UserRepository userRepo;
+    public final ActivityLogRepository activityLogRepo;
 
     // Services
     public final IdentityService identityService;
@@ -79,6 +80,8 @@ public class AppContext {
         this.presenterRepo = connection != null ? new JdbcPresenterRepository(connection) : null;
         this.ticketRepo    = connection != null ? new JdbcTicketRepository(connection) : null;
         this.userRepo      = null;
+        this.activityLogRepo = connection != null ? new JdbcActivityLogRepository(connection) : null;
+        System.out.println(" ActivityLogRepository initialized: " + (activityLogRepo != null ? "OK" : "NULL"));
         this.scheduleService = sessionRepo != null ? new ScheduleServiceImpl(sessionRepo) : null;
 
         this.eventService = eventRepo != null ? new EventServiceImpl(

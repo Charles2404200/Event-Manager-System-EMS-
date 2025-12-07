@@ -174,12 +174,12 @@ public class AdminDashboardController {
 
     @FXML
     public void onViewReports() {
-        System.out.println("View Reports clicked");
+        SceneManager.switchTo("report_view.fxml", "Event Manager System - Reports & Analytics");
     }
 
     @FXML
     public void onActivityLogs() {
-        System.out.println("Activity Logs clicked");
+        SceneManager.switchTo("activity_logs.fxml", "Event Manager System - Activity Logs");
     }
 
     @FXML

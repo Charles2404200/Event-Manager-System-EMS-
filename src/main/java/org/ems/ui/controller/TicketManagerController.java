@@ -18,6 +18,7 @@ import org.ems.domain.repository.TicketRepository;
 import org.ems.domain.model.enums.TicketStatus;
 import org.ems.domain.model.enums.TicketType;
 import org.ems.domain.model.enums.PaymentStatus;
+import org.ems.infrastructure.util.ActivityLogger;
 import org.ems.ui.stage.SceneManager;
 
 import java.math.BigDecimal;
@@ -60,8 +61,19 @@ public class TicketManagerController {
     private Map<String, UUID> attendeeMap = new HashMap<>();
     private Map<String, UUID> templateMap = new HashMap<>(); // Cache for template IDs
 
+    // App-level caches theo ID để tránh gọi findAll()/findById() lặp lại
+    private final Map<UUID, Event> eventCacheById = new HashMap<>();
+    private final Map<UUID, Session> sessionCacheById = new HashMap<>();
+    private final Map<UUID, Attendee> attendeeCacheById = new HashMap<>();
+
+    // Cache thống kê assigned theo template để tránh aggregate lặp lại
+    private Map<TemplateKey, Long> templateAssignedCountCache = null;
+    private boolean assignedTabInitialized = false;
+
     @FXML
     public void initialize() {
+        long initStart = System.currentTimeMillis();
+        String runId = "TicketScreenRun-" + initStart;
         try {
             AppContext context = AppContext.get();
             ticketRepo = context.ticketRepo;
@@ -76,23 +88,113 @@ public class TicketManagerController {
             setupTemplateTableColumns();
             setupAssignedTicketTableColumns();
 
-            // Load data (tối ưu: templates + assigned tickets chạy async)
+            // Load events cho phần tạo template
+            long eventsStart = System.currentTimeMillis();
             loadEvents();
+            System.out.println("[" + runId + "] loadEvents() took " + (System.currentTimeMillis() - eventsStart) + " ms");
 
-            // Tính tổng số trang trước (dựa trên count đơn giản)
-            long templateCount = ticketRepo != null ? ticketRepo.findTemplates().size() : 0;
-            long assignedCount = ticketRepo != null ? ticketRepo.findAssigned().size() : 0;
-            totalTemplatePages = Math.max(1, (int) Math.ceil(templateCount / (double) PAGE_SIZE));
-            totalAssignedPages = Math.max(1, (int) Math.ceil(assignedCount / (double) PAGE_SIZE));
+            // Khởi tạo cache app-level (background, không block UI)
+            initCachesAsync(runId);
+
+            // Khởi tạo label page mặc định, tránh tính count ngay để không delay initialize
+            totalTemplatePages = 1;
+            totalAssignedPages = 1;
             updateTemplatesPageLabel();
             updateAssignedPageLabel();
 
-            loadTemplatesAsync();
-            loadAssignedTickets();
+            // Chỉ load page đầu của Templates để user thấy UI & dữ liệu nhanh
+            loadTemplatesAsync(runId);
+
+            // Tab Assigned sẽ được lazy-load khi user mở tab đó (onAssignedTabSelected)
 
         } catch (Exception e) {
             showAlert("Error", "Failed to initialize: " + e.getMessage());
             e.printStackTrace();
+        } finally {
+            System.out.println("[" + runId + "] initialize() took " + (System.currentTimeMillis() - initStart) + " ms");
+        }
+    }
+
+    private void initCachesAsync(String runId) {
+        Task<Void> cacheTask = new Task<>() {
+            @Override
+            protected Void call() {
+                long start = System.currentTimeMillis();
+                try {
+                    AppContext context = AppContext.get();
+                    eventCacheById.clear();
+                    sessionCacheById.clear();
+                    attendeeCacheById.clear();
+
+                    if (context.eventRepo != null) {
+                        for (Event e : context.eventRepo.findAll()) {
+                            eventCacheById.put(e.getId(), e);
+                        }
+                    }
+                    if (context.sessionRepo != null) {
+                        for (Session s : context.sessionRepo.findAll()) {
+                            sessionCacheById.put(s.getId(), s);
+                        }
+                    }
+                    if (context.attendeeRepo != null) {
+                        for (Attendee a : context.attendeeRepo.findAll()) {
+                            attendeeCacheById.put(a.getId(), a);
+                        }
+                    }
+
+                    System.out.println("[" + runId + "] initCachesAsync built caches in " +
+                            (System.currentTimeMillis() - start) + " ms (events=" + eventCacheById.size() +
+                            ", sessions=" + sessionCacheById.size() + ", attendees=" + attendeeCacheById.size() + ")");
+
+                } catch (Exception ex) {
+                    System.err.println("[" + runId + "] initCachesAsync failed: " + ex.getMessage());
+                    ex.printStackTrace();
+                }
+                return null;
+            }
+        };
+
+        Thread t = new Thread(cacheTask, "ticket-cache-loader");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    // Đếm bằng COUNT(*) ở DB thông qua countTemplates/countAssigned
+    private long safeCountTemplates() {
+        long start = System.currentTimeMillis();
+        try {
+            long res = ticketRepo.countTemplates();
+            System.out.println("[TicketPerf] safeCountTemplates() via countTemplates() took " +
+                    (System.currentTimeMillis() - start) + " ms, count=" + res);
+            return res;
+        } catch (UnsupportedOperationException e) {
+            System.err.println("[TicketPerf] countTemplates() not implemented, falling back to findTemplates().size(): " + e.getMessage());
+            try {
+                List<Ticket> templates = ticketRepo.findTemplates();
+                return templates != null ? templates.size() : 0L;
+            } catch (Exception ex) {
+                System.err.println("[TicketPerf] safeCountTemplates() fallback failed: " + ex.getMessage());
+                return 0L;
+            }
+        }
+    }
+
+    private long safeCountAssigned() {
+        long start = System.currentTimeMillis();
+        try {
+            long res = ticketRepo.countAssigned();
+            System.out.println("[TicketPerf] safeCountAssigned() via countAssigned() took " +
+                    (System.currentTimeMillis() - start) + " ms, count=" + res);
+            return res;
+        } catch (UnsupportedOperationException e) {
+            System.err.println("[TicketPerf] countAssigned() not implemented, falling back to findAssigned().size(): " + e.getMessage());
+            try {
+                List<Ticket> assigned = ticketRepo.findAssigned();
+                return assigned != null ? assigned.size() : 0L;
+            } catch (Exception ex) {
+                System.err.println("[TicketPerf] safeCountAssigned() fallback failed: " + ex.getMessage());
+                return 0L;
+            }
         }
     }
 
@@ -206,18 +308,29 @@ public class TicketManagerController {
     // ====== Tối ưu load templates ======
 
     private void loadTemplatesAsync() {
+        loadTemplatesAsync(null);
+    }
+
+    private void loadTemplatesAsync(String runId) {
         templatesCountLabel.setText("Loading templates...");
+        long asyncStart = System.currentTimeMillis();
 
         Task<List<TemplateRow>> task = new Task<>() {
             @Override
             protected List<TemplateRow> call() {
-                return loadTemplatesOptimized();
+                long start = System.currentTimeMillis();
+                List<TemplateRow> rows = loadTemplatesOptimized(runId);
+                long took = System.currentTimeMillis() - start;
+                System.out.println("[" + (runId != null ? runId : "TicketTemplates") + "] loadTemplatesOptimized() took " + took + " ms");
+                return rows;
             }
         };
 
         task.setOnSucceeded(evt -> {
             allTemplates = task.getValue();
             displayTemplates(allTemplates);
+            System.out.println("[" + (runId != null ? runId : "TicketTemplates") + "] loadTemplatesAsync total (task) " +
+                    (System.currentTimeMillis() - asyncStart) + " ms");
         });
 
         task.setOnFailed(evt -> {
@@ -238,92 +351,92 @@ public class TicketManagerController {
      * - Không còn vòng lặp lồng nhau O(N^2)
      */
     private List<TemplateRow> loadTemplatesOptimized() {
+        return loadTemplatesOptimized(null);
+    }
+
+    private List<TemplateRow> loadTemplatesOptimized(String runId) {
+        long startAll = System.currentTimeMillis();
         List<TemplateRow> result = new ArrayList<>();
         try {
             if (ticketRepo == null) return result;
 
             int offset = currentTemplatePage * PAGE_SIZE;
+            long dbTemplatesStart = System.currentTimeMillis();
             List<Ticket> templateTickets = ticketRepo.findTemplatesPage(offset, PAGE_SIZE);
-            // Assigned có thể giữ toàn bộ để đếm available, thường ít hơn templates tổng
-            List<Ticket> assignedTickets = ticketRepo.findAssigned();
+            System.out.println("[" + (runId != null ? runId : "TicketTemplates") + "] findTemplatesPage(offset=" +
+                    offset + ") took " + (System.currentTimeMillis() - dbTemplatesStart) + " ms, size=" +
+                    (templateTickets != null ? templateTickets.size() : 0));
 
+            // Lấy thống kê assigned từ cache (hoặc query DB 1 lần duy nhất)
+            Map<TemplateKey, Long> assignedCountMap = getTemplateAssignedCountCache(runId);
+
+            // Dùng cache event/session theo ID nếu đã có, nếu chưa thì fallback sang repo
             AppContext context = AppContext.get();
-            Map<UUID, String> eventNameCache = new HashMap<>();
-            Map<UUID, String> sessionNameCache = new HashMap<>();
-            if (context.eventRepo != null) {
-                for (Event evt : context.eventRepo.findAll()) {
-                    eventNameCache.put(evt.getId(), evt.getName());
+            if (templateTickets != null) {
+                for (Ticket ticket : templateTickets) {
+                    UUID eventId = ticket.getEventId();
+                    UUID sessionId = ticket.getSessionId();
+
+                    String eventName = "Unknown";
+                    String sessionName = "Unknown";
+
+                    Event evt = eventId != null ? eventCacheById.get(eventId) : null;
+                    if (evt == null && context.eventRepo != null && eventId != null) {
+                        evt = context.eventRepo.findById(eventId);
+                        if (evt != null) eventCacheById.put(eventId, evt);
+                    }
+                    if (evt != null) eventName = evt.getName();
+
+                    Session sess = sessionId != null ? sessionCacheById.get(sessionId) : null;
+                    if (sess == null && context.sessionRepo != null && sessionId != null) {
+                        sess = context.sessionRepo.findById(sessionId);
+                        if (sess != null) sessionCacheById.put(sessionId, sess);
+                    }
+                    if (sess != null) sessionName = sess.getTitle();
+
+                    TemplateKey key = new TemplateKey(eventId, sessionId, ticket.getType(), ticket.getPrice());
+                    long assigned = assignedCountMap.getOrDefault(key, 0L);
+                    long available = 100 - assigned; // TODO: thay bằng capacity thực tế nếu có
+
+                    result.add(new TemplateRow(
+                            eventName,
+                            sessionName,
+                            ticket.getType() != null ? ticket.getType().name() : "N/A",
+                            ticket.getPrice() != null ? "$" + ticket.getPrice() : "$0",
+                            String.valueOf(available)
+                    ));
                 }
-            }
-            if (context.sessionRepo != null) {
-                for (Session sess : context.sessionRepo.findAll()) {
-                    sessionNameCache.put(sess.getId(), sess.getTitle());
-                }
-            }
-            Map<TemplateKey, Integer> assignedCountMap = new HashMap<>();
-            for (Ticket t : assignedTickets) {
-                TemplateKey key = new TemplateKey(t.getEventId(), t.getSessionId(), t.getType(), t.getPrice());
-                assignedCountMap.merge(key, 1, Integer::sum);
-            }
-            for (Ticket ticket : templateTickets) {
-                String eventName = ticket.getEventId() != null
-                        ? eventNameCache.getOrDefault(ticket.getEventId(), "Unknown")
-                        : "Unknown";
-                String sessionName = ticket.getSessionId() != null
-                        ? sessionNameCache.getOrDefault(ticket.getSessionId(), "Unknown")
-                        : "Unknown";
-                TemplateKey key = new TemplateKey(ticket.getEventId(), ticket.getSessionId(), ticket.getType(), ticket.getPrice());
-                int assigned = assignedCountMap.getOrDefault(key, 0);
-                int available = 100 - assigned;
-                result.add(new TemplateRow(
-                        eventName,
-                        sessionName,
-                        ticket.getType() != null ? ticket.getType().name() : "N/A",
-                        ticket.getPrice() != null ? "$" + ticket.getPrice() : "$0",
-                        String.valueOf(available)
-                ));
             }
         } catch (Exception e) {
             System.err.println("Error loading templates (optimized): " + e.getMessage());
             e.printStackTrace();
+        } finally {
+            System.out.println("[" + (runId != null ? runId : "TicketTemplates") + "] loadTemplatesOptimized TOTAL took " +
+                    (System.currentTimeMillis() - startAll) + " ms, rows=" + result.size());
         }
         return result;
     }
 
-    // Khoá template để đếm assigned (eventId + sessionId + type + price)
-    private static final class TemplateKey {
-        private final UUID eventId;
-        private final UUID sessionId;
-        private final TicketType type;
-        private final BigDecimal price;
-
-        private TemplateKey(UUID eventId, UUID sessionId, TicketType type, BigDecimal price) {
-            this.eventId = eventId;
-            this.sessionId = sessionId;
-            this.type = type;
-            this.price = price;
+    // Lấy (và cache) thống kê assigned theo template; chỉ query DB 1 lần cho vòng đời controller
+    private Map<TemplateKey, Long> getTemplateAssignedCountCache(String runId) {
+        if (templateAssignedCountCache != null) {
+            return templateAssignedCountCache;
         }
-
-        @Override
-        public boolean equals(Object o) {
-            if (this == o) return true;
-            if (!(o instanceof TemplateKey key)) return false;
-            return Objects.equals(eventId, key.eventId) &&
-                   Objects.equals(sessionId, key.sessionId) &&
-                   type == key.type &&
-                   Objects.equals(price, key.price);
+        long statsStart = System.currentTimeMillis();
+        List<TicketRepository.TemplateAssignmentStats> statsList = ticketRepo.findAssignedStatsForTemplates();
+        Map<TemplateKey, Long> map = new HashMap<>();
+        for (TicketRepository.TemplateAssignmentStats s : statsList) {
+            TemplateKey key = new TemplateKey(s.getEventId(), s.getSessionId(), s.getType(), s.getPrice());
+            map.put(key, s.getAssignedCount());
         }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(eventId, sessionId, type, price);
-        }
+        templateAssignedCountCache = map;
+        System.out.println("[" + (runId != null ? runId : "TicketTemplates") + "] findAssignedStatsForTemplates() took " +
+                (System.currentTimeMillis() - statsStart) + " ms, keys=" + map.size());
+        return map;
     }
 
-    private void displayTemplates(List<TemplateRow> templates) {
-        ObservableList<TemplateRow> obs = FXCollections.observableArrayList(templates);
-        templatesTable.setItems(obs);
-        templatesCountLabel.setText("Total Templates: " + templates.size());
+    private void invalidateTemplateAssignedStatsCache() {
+        templateAssignedCountCache = null;
     }
 
     @FXML
@@ -360,9 +473,11 @@ public class TicketManagerController {
             if (ticketRepo != null) {
                 try {
                     ticketRepo.save(template);
+                    ActivityLogger.getInstance().logCreate("Ticket Template",
+                            "Created template: " + templateTypeCombo.getValue() + " - $" + price);
                     showAlert("Success", "Ticket template created successfully!");
                     templatePriceField.clear();
-                    // trước đây gọi loadTemplates(); (hàm cũ), giờ dùng bản async tối ưu
+                    invalidateTemplateAssignedStatsCache();
                     loadTemplatesAsync();
                 } catch (Exception saveEx) {
                     System.err.println("Ticket save error: " + saveEx.getMessage());
@@ -408,38 +523,43 @@ public class TicketManagerController {
         }
     }
 
-    private void loadTemplatesForAssign(List<Ticket> allTickets) {
+    private void loadTemplatesForAssign() {
         try {
             List<String> templateList = new ArrayList<>();
             templateMap.clear();
 
-            if (ticketRepo != null && !allTickets.isEmpty()) {
-                AppContext context = AppContext.get();
+            AppContext context = AppContext.get();
 
-                for (Ticket ticket : allTickets) {
-                    // Only show templates (tickets without attendeeId)
-                    if (ticket.getAttendeeId() == null) {
-                        String eventName = "Unknown";
-                        String sessionName = "Unknown";
+            // Lấy tất cả ticket templates: attendee_id IS NULL
+            List<Ticket> templates = ticketRepo != null ? ticketRepo.findTemplates() : Collections.emptyList();
 
-                        try {
-                            if (context.eventRepo != null && ticket.getEventId() != null) {
-                                Event evt = context.eventRepo.findById(ticket.getEventId());
-                                if (evt != null) eventName = evt.getName();
-                            }
-                            if (context.sessionRepo != null && ticket.getSessionId() != null) {
-                                Session sess = context.sessionRepo.findById(ticket.getSessionId());
-                                if (sess != null) sessionName = sess.getTitle();
-                            }
-                        } catch (Exception e) {
-                            System.err.println("Error mapping template: " + e.getMessage());
-                        }
+            for (Ticket ticket : templates) {
+                UUID eventId = ticket.getEventId();
+                UUID sessionId = ticket.getSessionId();
 
-                        String display = eventName + " - " + sessionName + " (" + ticket.getType().name() + ": $" + ticket.getPrice() + ")";
-                        templateList.add(display);
-                        templateMap.put(display, ticket.getId()); // Cache template ID for later use
-                    }
+                String eventName = "Unknown";
+                String sessionName = "Unknown";
+
+                Event evt = eventId != null ? eventCacheById.get(eventId) : null;
+                if (evt == null && context.eventRepo != null && eventId != null) {
+                    evt = context.eventRepo.findById(eventId);
+                    if (evt != null) eventCacheById.put(eventId, evt);
                 }
+                if (evt != null) eventName = evt.getName();
+
+                Session sess = sessionId != null ? sessionCacheById.get(sessionId) : null;
+                if (sess == null && context.sessionRepo != null && sessionId != null) {
+                    sess = context.sessionRepo.findById(sessionId);
+                    if (sess != null) sessionCacheById.put(sessionId, sess);
+                }
+                if (sess != null) sessionName = sess.getTitle();
+
+                String typeName = ticket.getType() != null ? ticket.getType().name() : "N/A";
+                String priceStr = ticket.getPrice() != null ? ticket.getPrice().toString() : "0";
+                String display = eventName + " - " + sessionName + " (" + typeName + ": $" + priceStr + ")";
+
+                templateList.add(display);
+                templateMap.put(display, ticket.getId());
             }
 
             assignTemplateCombo.setItems(FXCollections.observableArrayList(templateList));
@@ -448,52 +568,66 @@ public class TicketManagerController {
             }
 
         } catch (Exception e) {
-            System.err.println("Error loading templates: " + e.getMessage());
+            System.err.println("Error loading templates for assign: " + e.getMessage());
         }
     }
 
     private void loadAssignedTickets() {
+        loadAssignedTickets(null);
+    }
+
+    private void loadAssignedTickets(String runId) {
         assignedCountLabel.setText("Loading...");
+        long asyncStart = System.currentTimeMillis();
 
         Task<AssignedTicketsData> task = new Task<>() {
             @Override
             protected AssignedTicketsData call() {
+                long start = System.currentTimeMillis();
                 List<TicketRow> tickets = new ArrayList<>();
                 List<Ticket> assignedTickets = new ArrayList<>();
                 try {
                     if (ticketRepo == null) return new AssignedTicketsData(tickets, assignedTickets);
                     int offset = currentAssignedPage * PAGE_SIZE;
+                    long dbAssignedStart = System.currentTimeMillis();
                     assignedTickets = ticketRepo.findAssignedPage(offset, PAGE_SIZE);
+                    System.out.println("[" + (runId != null ? runId : "AssignedTickets") + "] findAssignedPage(offset=" +
+                            offset + ") took " + (System.currentTimeMillis() - dbAssignedStart) +
+                            " ms, size=" + (assignedTickets != null ? assignedTickets.size() : 0));
+
                     AppContext context = AppContext.get();
-                    Map<UUID, Attendee> attendeeCache = new HashMap<>();
-                    Map<UUID, Event> eventCache = new HashMap<>();
-                    Map<UUID, Session> sessionCache = new HashMap<>();
-                    if (context.attendeeRepo != null) {
-                        for (Attendee att : context.attendeeRepo.findAll()) {
-                            attendeeCache.put(att.getId(), att);
-                        }
-                    }
-                    if (context.eventRepo != null) {
-                        for (Event evt : context.eventRepo.findAll()) {
-                            eventCache.put(evt.getId(), evt);
-                        }
-                    }
-                    if (context.sessionRepo != null) {
-                        for (Session sess : context.sessionRepo.findAll()) {
-                            sessionCache.put(sess.getId(), sess);
-                        }
-                    }
+
                     int processed = 0;
                     for (Ticket ticket : assignedTickets) {
+                        UUID attendeeId = ticket.getAttendeeId();
+                        UUID eventId = ticket.getEventId();
+                        UUID sessionId = ticket.getSessionId();
+
                         String attendeeName = "Unknown";
                         String eventName = "Unknown";
                         String sessionName = "Unknown";
-                        Attendee att = attendeeCache.get(ticket.getAttendeeId());
+
+                        Attendee att = attendeeId != null ? attendeeCacheById.get(attendeeId) : null;
+                        if (att == null && context.attendeeRepo != null && attendeeId != null) {
+                            att = context.attendeeRepo.findById(attendeeId);
+                            if (att != null) attendeeCacheById.put(attendeeId, att);
+                        }
                         if (att != null) attendeeName = att.getFullName();
-                        Event evt = eventCache.get(ticket.getEventId());
+
+                        Event evt = eventId != null ? eventCacheById.get(eventId) : null;
+                        if (evt == null && context.eventRepo != null && eventId != null) {
+                            evt = context.eventRepo.findById(eventId);
+                            if (evt != null) eventCacheById.put(eventId, evt);
+                        }
                         if (evt != null) eventName = evt.getName();
-                        Session sess = sessionCache.get(ticket.getSessionId());
+
+                        Session sess = sessionId != null ? sessionCacheById.get(sessionId) : null;
+                        if (sess == null && context.sessionRepo != null && sessionId != null) {
+                            sess = context.sessionRepo.findById(sessionId);
+                            if (sess != null) sessionCacheById.put(sessionId, sess);
+                        }
                         if (sess != null) sessionName = sess.getTitle();
+
                         tickets.add(new TicketRow(
                                 ticket.getId().toString().substring(0, 8),
                                 attendeeName,
@@ -511,6 +645,8 @@ public class TicketManagerController {
                     System.err.println("❌ Error loading assigned tickets: " + e.getMessage());
                     e.printStackTrace();
                 }
+                System.out.println("[" + (runId != null ? runId : "AssignedTickets") + "] loadAssignedTickets task took " +
+                        (System.currentTimeMillis() - start) + " ms, rows=" + tickets.size());
                 return new AssignedTicketsData(tickets, assignedTickets);
             }
         };
@@ -520,8 +656,11 @@ public class TicketManagerController {
             allAssignedTickets = data.tickets;
             loadAttendees();
             displayAssignedTickets(allAssignedTickets);
-            loadTemplatesForAssign(data.allTickets);
+            // Lấy templates từ repo (attendee_id IS NULL) thay vì từ assignedTickets
+            loadTemplatesForAssign();
             calculateStatistics();
+            System.out.println("[" + (runId != null ? runId : "AssignedTickets") + "] loadAssignedTickets total (task) " +
+                    (System.currentTimeMillis() - asyncStart) + " ms");
         });
 
         task.setOnFailed(event -> {
@@ -530,9 +669,36 @@ public class TicketManagerController {
             assignedCountLabel.setText("Error loading data");
         });
 
-        Thread bgThread = new Thread(task);
+        Thread bgThread = new Thread(task, "assigned-tickets-loader");
         bgThread.setDaemon(true);
         bgThread.start();
+    }
+
+    // Lazy-load tab Assigned khi user mở lần đầu (gắn từ FXML hoặc Tab event)
+    public void onAssignedTabSelected() {
+        if (!assignedTabInitialized) {
+            assignedTabInitialized = true;
+            // Đếm assigned và tính tổng số trang ở background để không block UI
+            Task<Void> t = new Task<>() {
+                @Override
+                protected Void call() {
+                    long start = System.currentTimeMillis();
+                    long assignedCount = safeCountAssigned();
+                    int pages = Math.max(1, (int) Math.ceil(assignedCount / (double) PAGE_SIZE));
+                    System.out.println("[AssignedTab] countAssigned=" + assignedCount + ", pages=" + pages +
+                            " took " + (System.currentTimeMillis() - start) + " ms");
+                    Platform.runLater(() -> {
+                        totalAssignedPages = pages;
+                        updateAssignedPageLabel();
+                        loadAssignedTickets("AssignedFirstLoad-" + System.currentTimeMillis());
+                    });
+                    return null;
+                }
+            };
+            Thread bg = new Thread(t, "assigned-count-loader");
+            bg.setDaemon(true);
+            bg.start();
+        }
     }
 
     // Helper class to pass data from task
@@ -544,6 +710,12 @@ public class TicketManagerController {
             this.tickets = tickets;
             this.allTickets = allTickets;
         }
+    }
+
+    private void displayTemplates(List<TemplateRow> templates) {
+        ObservableList<TemplateRow> obs = FXCollections.observableArrayList(templates);
+        templatesTable.setItems(obs);
+        templatesCountLabel.setText("Total Templates: " + templates.size());
     }
 
     private void displayAssignedTickets(List<TicketRow> tickets) {
@@ -628,7 +800,10 @@ public class TicketManagerController {
                 try {
                     ticketRepo.save(newTicket);
                     showAlert("Success", "Ticket assigned to attendee successfully!");
+                    invalidateTemplateAssignedStatsCache();
+                    // cập nhật lại cả Assigned tab (nếu đang xem) và Templates (available)
                     loadAssignedTickets();
+                    loadTemplatesAsync();
                 } catch (Exception saveEx) {
                     System.err.println("Ticket assign error: " + saveEx.getMessage());
                     saveEx.printStackTrace();
@@ -742,5 +917,37 @@ public class TicketManagerController {
         public String getPrice() { return price; }
         public String getStatus() { return status; }
     }
-}
 
+    /**
+     * Khóa template để đếm assigned (eventId + sessionId + type + price).
+     * Được dùng làm key cho templateAssignedCountCache và các map thống kê.
+     */
+    private static final class TemplateKey {
+        private final UUID eventId;
+        private final UUID sessionId;
+        private final TicketType type;
+        private final BigDecimal price;
+
+        private TemplateKey(UUID eventId, UUID sessionId, TicketType type, BigDecimal price) {
+            this.eventId = eventId;
+            this.sessionId = sessionId;
+            this.type = type;
+            this.price = price;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof TemplateKey key)) return false;
+            return Objects.equals(eventId, key.eventId)
+                    && Objects.equals(sessionId, key.sessionId)
+                    && type == key.type
+                    && Objects.equals(price, key.price);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(eventId, sessionId, type, price);
+        }
+    }
+}
