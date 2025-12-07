@@ -58,11 +58,9 @@
 
                         <HBox spacing="10" alignment="CENTER_LEFT" style="-fx-padding: 5 10 0 10;">
                             <Label fx:id="templatesCountLabel" text="Total Templates: 0" style="-fx-font-size: 11; -fx-text-fill: #666;"/>
-                            <!-- Sử dụng constraint HBox.hgrow thay vì property Hgrow -->
                             <Pane HBox.hgrow="ALWAYS"/>
-                            <Button text="Prev" onAction="#onTemplatesPrevPage"/>
-                            <Label fx:id="templatesPageLabel" text="Page 1 / 1" style="-fx-font-size: 11; -fx-text-fill: #666;"/>
-                            <Button text="Next" onAction="#onTemplatesNextPage"/>
+                            <Button text="⟲ Refresh" onAction="#onTemplatesRefresh" style="-fx-padding: 8 15; -fx-cursor: hand;"/>
+                            <Label fx:id="templatesPageLabel" text="(Keyset Pagination)" style="-fx-font-size: 11; -fx-text-fill: #666;"/>
                         </HBox>
                     </VBox>
                 </VBox>
@@ -102,11 +100,9 @@
 
                         <HBox spacing="10" alignment="CENTER_LEFT" style="-fx-padding: 5 10 0 10;">
                             <Label fx:id="assignedCountLabel" text="Total Assigned: 0" style="-fx-font-size: 11; -fx-text-fill: #666;"/>
-                            <!-- Sử dụng constraint HBox.hgrow thay vì property Hgrow -->
                             <Pane HBox.hgrow="ALWAYS"/>
-                            <Button text="Prev" onAction="#onAssignedPrevPage"/>
-                            <Label fx:id="assignedPageLabel" text="Page 1 / 1" style="-fx-font-size: 11; -fx-text-fill: #666;"/>
-                            <Button text="Next" onAction="#onAssignedNextPage"/>
+                            <Button text="⟲ Refresh" onAction="#onAssignedRefresh" style="-fx-padding: 8 15; -fx-cursor: hand;"/>
+                            <Label fx:id="assignedPageLabel" text="(Keyset Pagination)" style="-fx-font-size: 11; -fx-text-fill: #666;"/>
                         </HBox>
                     </VBox>
 

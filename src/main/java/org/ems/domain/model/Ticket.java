@@ -13,7 +13,7 @@ public class Ticket {
 
     private UUID attendeeId;
     private UUID eventId;
-    // Note: sessionId removed - tickets are now event-level only
+    // Note: sessionId removed - tickets are event-level only
     // Attendees register for sessions separately after purchasing ticket
 
     private TicketType type;
@@ -23,6 +23,7 @@ public class Ticket {
     private TicketStatus ticketStatus;
 
     private String qrCodeData;
+    private java.sql.Timestamp createdAt;
 
     public Ticket() {
         this.id = UUID.randomUUID();
@@ -93,5 +94,13 @@ public class Ticket {
 
     public void setQrCodeData(String qrCodeData) {
         this.qrCodeData = qrCodeData;
+    }
+
+    public java.sql.Timestamp getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(java.sql.Timestamp createdAt) {
+        this.createdAt = createdAt;
     }
 }

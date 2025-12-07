@@ -24,18 +24,18 @@ public class JdbcTicketRepository implements TicketRepository {
     public Ticket save(Ticket t) {
 
         String sql = """
-            INSERT INTO tickets
-            (id, attendee_id, event_id, type, price, payment_status, status, qr_code_data)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (id) DO UPDATE SET
-                attendee_id    = EXCLUDED.attendee_id,
-                event_id       = EXCLUDED.event_id,
-                type           = EXCLUDED.type,
-                price          = EXCLUDED.price,
-                payment_status = EXCLUDED.payment_status,
-                status         = EXCLUDED.status,
-                qr_code_data   = EXCLUDED.qr_code_data
-        """;
+                    INSERT INTO tickets
+                    (id, attendee_id, event_id, type, price, payment_status, status, qr_code_data)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (id) DO UPDATE SET
+                        attendee_id    = EXCLUDED.attendee_id,
+                        event_id       = EXCLUDED.event_id,
+                        type           = EXCLUDED.type,
+                        price          = EXCLUDED.price,
+                        payment_status = EXCLUDED.payment_status,
+                        status         = EXCLUDED.status,
+                        qr_code_data   = EXCLUDED.qr_code_data
+                """;
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
 
@@ -452,7 +452,106 @@ public class JdbcTicketRepository implements TicketRepository {
         }
 
         t.setQrCodeData(rs.getString("qr_code_data"));
+        t.setCreatedAt(rs.getTimestamp("created_at"));
 
         return t;
+    }
+
+    // ---------------------------------------------------------
+    // KEYSET PAGINATION - TEMPLATES
+    // ---------------------------------------------------------
+    @Override
+    public List<Ticket> findTemplatesByCursor(Timestamp lastCreatedAt, UUID lastId, int limit) {
+        List<Ticket> list = new ArrayList<>();
+
+        String sql;
+        if (lastCreatedAt == null) {
+            // First page: no cursor
+            sql = """
+                SELECT * FROM tickets
+                WHERE attendee_id IS NULL
+                ORDER BY created_at DESC NULLS LAST, id DESC
+                LIMIT ?
+                """;
+        } else {
+            // Subsequent pages: use keyset cursor
+            sql = """
+                SELECT * FROM tickets
+                WHERE attendee_id IS NULL
+                  AND (created_at, id) < (?, ?)
+                ORDER BY created_at DESC NULLS LAST, id DESC
+                LIMIT ?
+                """;
+        }
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            int paramIndex = 1;
+
+            if (lastCreatedAt != null) {
+                ps.setTimestamp(paramIndex++, lastCreatedAt);
+                ps.setObject(paramIndex++, lastId);
+            }
+
+            ps.setInt(paramIndex, limit);
+
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    list.add(mapRow(rs));
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to find templates by cursor", e);
+        }
+
+        return list;
+    }
+
+    // ---------------------------------------------------------
+    // KEYSET PAGINATION - ASSIGNED
+    // ---------------------------------------------------------
+    @Override
+    public List<Ticket> findAssignedByCursor(Timestamp lastCreatedAt, UUID lastId, int limit) {
+        List<Ticket> list = new ArrayList<>();
+
+        String sql;
+        if (lastCreatedAt == null) {
+            // First page: no cursor
+            sql = """
+                SELECT * FROM tickets
+                WHERE attendee_id IS NOT NULL
+                ORDER BY created_at DESC NULLS LAST, id DESC
+                LIMIT ?
+                """;
+        } else {
+            // Subsequent pages: use keyset cursor
+            sql = """
+                SELECT * FROM tickets
+                WHERE attendee_id IS NOT NULL
+                  AND (created_at, id) < (?, ?)
+                ORDER BY created_at DESC NULLS LAST, id DESC
+                LIMIT ?
+                """;
+        }
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            int paramIndex = 1;
+
+            if (lastCreatedAt != null) {
+                ps.setTimestamp(paramIndex++, lastCreatedAt);
+                ps.setObject(paramIndex++, lastId);
+            }
+
+            ps.setInt(paramIndex, limit);
+
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    list.add(mapRow(rs));
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to find assigned by cursor", e);
+        }
+
+        return list;
     }
 }

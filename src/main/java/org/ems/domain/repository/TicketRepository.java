@@ -5,6 +5,7 @@ import org.ems.domain.model.enums.TicketType;
 import org.ems.domain.model.enums.TicketStatus;
 import org.ems.domain.model.enums.PaymentStatus;
 
+import java.sql.Timestamp;
 import java.util.List;
 import java.util.UUID;
 
@@ -97,4 +98,26 @@ public interface TicketRepository {
         public java.math.BigDecimal getPrice() { return price; }
         public long getAssignedCount() { return assignedCount; }
     }
+
+    /**
+     * Find ticket templates by keyset cursor pagination.
+     * Uses (created_at, id) as cursor for efficient pagination.
+     *
+     * @param lastCreatedAt Last created_at value from previous page (null for first page)
+     * @param lastId Last id value from previous page (null for first page)
+     * @param limit Number of records to fetch
+     * @return List of template tickets
+     */
+    List<Ticket> findTemplatesByCursor(Timestamp lastCreatedAt, UUID lastId, int limit);
+
+    /**
+     * Find assigned tickets by keyset cursor pagination.
+     * Uses (created_at, id) as cursor for efficient pagination.
+     *
+     * @param lastCreatedAt Last created_at value from previous page (null for first page)
+     * @param lastId Last id value from previous page (null for first page)
+     * @param limit Number of records to fetch
+     * @return List of assigned tickets
+     */
+    List<Ticket> findAssignedByCursor(Timestamp lastCreatedAt, UUID lastId, int limit);
 }

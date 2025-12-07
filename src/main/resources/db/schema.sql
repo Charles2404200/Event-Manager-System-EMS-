@@ -177,3 +177,17 @@ CREATE INDEX IF NOT EXISTS idx_ticket_created_at ON tickets(created_at);
 CREATE INDEX IF NOT EXISTS idx_ticket_attendee_status ON tickets(attendee_id, status);
 CREATE INDEX IF NOT EXISTS idx_ticket_event_status ON tickets(event_id, status);
 CREATE INDEX IF NOT EXISTS idx_ticket_session_attendee ON tickets(session_id, attendee_id);
+
+-- TICKETS Table Indexes - Keyset Pagination
+CREATE INDEX IF NOT EXISTS idx_tickets_template_keyset
+    ON tickets (created_at DESC NULLS LAST, id DESC)
+    WHERE attendee_id IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_tickets_assigned_keyset
+    ON tickets (created_at DESC NULLS LAST, id DESC)
+    WHERE attendee_id IS NOT NULL;
+
+-- Aggregation for templates
+CREATE INDEX IF NOT EXISTS idx_tickets_assigned_aggregate
+    ON tickets (event_id, type, price)
+    WHERE attendee_id IS NOT NULL;
