@@ -7,11 +7,15 @@ import javafx.scene.control.*;
 import javafx.geometry.Insets;
 import javafx.scene.layout.VBox;
 import javafx.scene.layout.HBox;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import org.ems.config.AppContext;
 import org.ems.domain.model.*;
 import org.ems.domain.model.enums.TicketStatus;
+import org.ems.infrastructure.util.QRCodeUtil;
 import org.ems.ui.stage.SceneManager;
 
+import java.io.ByteArrayInputStream;
 import java.util.*;
 
 /**
@@ -100,10 +104,8 @@ public class MyTicketsController {
                             Event event = appContext.eventRepo.findById(ticket.getEventId());
                             if (event != null) eventName = event.getName();
                         }
-                        if (appContext.sessionRepo != null && ticket.getSessionId() != null) {
-                            Session session = appContext.sessionRepo.findById(ticket.getSessionId());
-                            if (session != null) sessionName = session.getTitle();
-                        }
+                        // Note: Tickets are now event-level only, not session-specific
+                        // sessionName will be "N/A" for event-level tickets
                     } catch (Exception e) {
                         System.err.println("Error loading ticket details: " + e.getMessage());
                     }
@@ -111,7 +113,7 @@ public class MyTicketsController {
                     allTickets.add(new TicketRow(
                             ticket.getId().toString().substring(0, 8),
                             eventName,
-                            sessionName,
+                            "Event Ticket",  // Show "Event Ticket" instead of session name
                             ticket.getType() != null ? ticket.getType().name() : "N/A",
                             ticket.getPrice() != null ? "$" + ticket.getPrice() : "$0",
                             ticket.getTicketStatus() != null ? ticket.getTicketStatus().name() : "N/A",
@@ -201,46 +203,121 @@ public class MyTicketsController {
             return;
         }
 
-        Dialog<Void> dialog = new Dialog<>();
-        dialog.setTitle("Ticket QR Code");
-        dialog.setHeaderText("QR Code for: " + selected.eventName);
+        try {
+            Dialog<Void> dialog = new Dialog<>();
+            dialog.setTitle("🎟️ Your Ticket - QR Code");
+            dialog.setHeaderText("Show this QR code at event entrance");
 
-        VBox content = new VBox(15);
-        content.setPadding(new Insets(20));
-        content.setStyle("-fx-alignment: center;");
+            VBox content = new VBox(15);
+            content.setPadding(new Insets(20));
+            content.setStyle("-fx-alignment: center;");
 
-        Label eventLabel = new Label("Event: " + selected.eventName);
-        eventLabel.setStyle("-fx-font-size: 14; -fx-font-weight: bold;");
+            // Ticket Info Section
+            VBox infoBox = new VBox(8);
+            infoBox.setStyle("-fx-border-color: #cccccc; -fx-border-width: 1; -fx-padding: 15; -fx-border-radius: 5;");
 
-        Label sessionLabel = new Label("Session: " + selected.sessionName);
-        sessionLabel.setStyle("-fx-font-size: 12;");
+            Label eventLabel = new Label("🎪 Event: " + selected.eventName);
+            eventLabel.setStyle("-fx-font-size: 14; -fx-font-weight: bold;");
 
-        Label typeLabel = new Label("Type: " + selected.type);
-        typeLabel.setStyle("-fx-font-size: 12;");
+            Label sessionLabel = new Label("🎤 Session: " + selected.sessionName);
+            sessionLabel.setStyle("-fx-font-size: 12;");
 
-        Label priceLabel = new Label("Price: " + selected.price);
-        priceLabel.setStyle("-fx-font-size: 12;");
+            Label typeLabel = new Label("🎫 Type: " + selected.type);
+            typeLabel.setStyle("-fx-font-size: 12;");
 
-        Label qrLabel = new Label(selected.qrCode);
-        qrLabel.setStyle("-fx-font-size: 16; -fx-font-weight: bold; -fx-text-fill: #2c3e50; " +
-                "-fx-border-color: #2c3e50; -fx-border-width: 2; -fx-padding: 15; " +
-                "-fx-background-color: #ecf0f1; -fx-border-radius: 5;");
+            Label priceLabel = new Label("💰 Price: " + selected.price);
+            priceLabel.setStyle("-fx-font-size: 12;");
 
-        content.getChildren().addAll(
-                eventLabel,
-                new Separator(),
-                sessionLabel,
-                typeLabel,
-                priceLabel,
-                new Label("QR Code:"),
-                qrLabel,
-                new Separator(),
-                new Label("Show this QR code at event entrance")
-        );
+            Label statusLabel = new Label("✅ Status: " + selected.status);
+            statusLabel.setStyle("-fx-font-size: 12;");
 
-        dialog.getDialogPane().setContent(content);
-        dialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
-        dialog.showAndWait();
+            infoBox.getChildren().addAll(eventLabel, sessionLabel, typeLabel, priceLabel, statusLabel);
+
+            content.getChildren().add(infoBox);
+
+            // QR Code Image Section
+            if (selected.qrCode != null && !selected.qrCode.equals("N/A")) {
+                try {
+                    // Generate QR code image from base64 data
+                    byte[] qrCodeImage = QRCodeUtil.generateQRCodeImage(selected.qrCode);
+
+                    if (qrCodeImage != null) {
+                        // Create ImageView for QR code
+                        ImageView qrImageView = new ImageView(
+                            new Image(new ByteArrayInputStream(qrCodeImage))
+                        );
+                        qrImageView.setFitWidth(300);
+                        qrImageView.setFitHeight(300);
+                        qrImageView.setPreserveRatio(true);
+                        qrImageView.setStyle("-fx-border-color: #2c3e50; -fx-border-width: 2;");
+
+                        // QR Code container with label
+                        VBox qrBox = new VBox(10);
+                        qrBox.setStyle("-fx-alignment: center; -fx-border-color: #ecf0f1; -fx-border-width: 1; -fx-padding: 20; -fx-border-radius: 5;");
+
+                        Label qrTitleLabel = new Label("QR Code");
+                        qrTitleLabel.setStyle("-fx-font-size: 14; -fx-font-weight: bold; -fx-text-fill: #2c3e50;");
+
+                        qrBox.getChildren().addAll(qrTitleLabel, qrImageView);
+                        content.getChildren().add(qrBox);
+
+                        System.out.println("✓ QR code image generated and displayed");
+                    } else {
+                        // Fallback to text display if image generation fails
+                        Label qrLabel = new Label(selected.qrCode);
+                        qrLabel.setStyle("-fx-font-size: 12; -fx-text-fill: #2c3e50; " +
+                                "-fx-border-color: #2c3e50; -fx-border-width: 1; -fx-padding: 10; " +
+                                "-fx-background-color: #ecf0f1; -fx-border-radius: 3;");
+                        qrLabel.setWrapText(true);
+
+                        VBox qrBox = new VBox(10);
+                        qrBox.setStyle("-fx-alignment: center;");
+                        qrBox.getChildren().addAll(
+                            new Label("QR Code (Text):"),
+                            qrLabel
+                        );
+                        content.getChildren().add(qrBox);
+                    }
+                } catch (Exception e) {
+                    System.err.println("Failed to generate QR code image: " + e.getMessage());
+
+                    // Fallback to text display
+                    Label qrLabel = new Label(selected.qrCode);
+                    qrLabel.setStyle("-fx-font-size: 12; -fx-text-fill: #2c3e50; " +
+                            "-fx-border-color: #2c3e50; -fx-border-width: 1; -fx-padding: 10; " +
+                            "-fx-background-color: #ecf0f1; -fx-border-radius: 3;");
+                    qrLabel.setWrapText(true);
+
+                    VBox qrBox = new VBox(10);
+                    qrBox.setStyle("-fx-alignment: center;");
+                    qrBox.getChildren().addAll(
+                        new Label("QR Code (Text Fallback):"),
+                        qrLabel
+                    );
+                    content.getChildren().add(qrBox);
+                }
+            } else {
+                Label noQRLabel = new Label("❌ No QR code available for this ticket");
+                noQRLabel.setStyle("-fx-font-size: 12; -fx-text-fill: #e74c3c;");
+                content.getChildren().add(noQRLabel);
+            }
+
+            // Instructions
+            Label instructionLabel = new Label("📱 Show this QR code at the event entrance to check in");
+            instructionLabel.setStyle("-fx-font-size: 11; -fx-text-fill: #666666; -fx-padding: 10;");
+            instructionLabel.setWrapText(true);
+            content.getChildren().add(new Separator());
+            content.getChildren().add(instructionLabel);
+
+            dialog.getDialogPane().setContent(content);
+            dialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
+            dialog.showAndWait();
+
+        } catch (Exception e) {
+            System.err.println("Error displaying QR code: " + e.getMessage());
+            e.printStackTrace();
+            showAlert("Error", "Failed to display QR code: " + e.getMessage());
+        }
     }
 
     @FXML

@@ -1,6 +1,7 @@
 package org.ems.application.impl;
 
 import org.ems.application.service.EventService;
+import org.ems.application.service.ImageService;
 import org.ems.application.service.ScheduleService;
 import org.ems.domain.model.enums.EventType;
 import org.ems.domain.model.Attendee;
@@ -20,19 +21,22 @@ public class EventServiceImpl implements EventService {
     private final AttendeeRepository attendeeRepo;
     private final PresenterRepository presenterRepo;
     private final ScheduleService scheduleService;
+    private final ImageService imageService;
 
     public EventServiceImpl(
             EventRepository eventRepo,
             SessionRepository sessionRepo,
             AttendeeRepository attendeeRepo,
             PresenterRepository presenterRepo,
-            ScheduleService scheduleService
+            ScheduleService scheduleService,
+            ImageService imageService
     ) {
         this.eventRepo = eventRepo;
         this.sessionRepo = sessionRepo;
         this.attendeeRepo = attendeeRepo;
         this.presenterRepo = presenterRepo;
         this.scheduleService = scheduleService;
+        this.imageService = imageService;
     }
 
     // EVENT CRUD
@@ -115,5 +119,71 @@ public class EventServiceImpl implements EventService {
         attendeeRepo.save(a);
 
         return true;
+    }
+
+    // IMAGE UPLOAD
+    @Override
+    public boolean uploadEventImage(String filePath, UUID eventId) {
+        try {
+            Event event = eventRepo.findById(eventId);
+            if (event == null) {
+                System.err.println("Event not found: " + eventId);
+                return false;
+            }
+
+            // Delete old image if it exists
+            if (event.getImagePath() != null && !event.getImagePath().isEmpty()) {
+                imageService.deleteImage(event.getImagePath());
+            }
+
+            // Upload new image
+            String uploadedPath = imageService.uploadEventImage(filePath, eventId);
+            if (uploadedPath == null) {
+                System.err.println("Failed to upload event image");
+                return false;
+            }
+
+            // Update event with new image path
+            event.setImagePath(uploadedPath);
+            eventRepo.save(event);
+
+            System.out.println("Event image uploaded successfully for event: " + eventId);
+            return true;
+
+        } catch (Exception e) {
+            System.err.println("Error uploading event image: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    @Override
+    public boolean uploadSessionMaterial(String filePath, UUID sessionId) {
+        try {
+            Session session = sessionRepo.findById(sessionId);
+            if (session == null) {
+                System.err.println("Session not found: " + sessionId);
+                return false;
+            }
+
+            // Upload material
+            String uploadedPath = imageService.uploadSessionMaterial(filePath, sessionId);
+            if (uploadedPath == null) {
+                System.err.println("Failed to upload session material");
+                return false;
+            }
+
+            // Add material path to session
+            session.addMaterial(uploadedPath);
+            sessionRepo.save(session);
+
+            System.out.println("Session material uploaded successfully for session: " + sessionId);
+            return true;
+
+        } catch (Exception e) {
+            System.err.println("Error uploading session material: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
     }
 }

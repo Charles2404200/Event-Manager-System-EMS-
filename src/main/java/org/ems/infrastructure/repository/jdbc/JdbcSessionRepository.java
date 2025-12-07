@@ -488,6 +488,79 @@ public class JdbcSessionRepository implements SessionRepository {
     }
 
     // -------------------------------------------------------
+    // ATTENDEE SESSION REGISTRATION
+    // -------------------------------------------------------
+    @Override
+    public void registerAttendeeForSession(UUID attendeeId, UUID sessionId) {
+        String sql = """
+            INSERT INTO attendee_session (attendee_id, session_id)
+            VALUES (?, ?)
+            ON CONFLICT DO NOTHING
+        """;
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setObject(1, attendeeId);
+            ps.setObject(2, sessionId);
+            ps.executeUpdate();
+            System.out.println("✓ Attendee " + attendeeId + " registered for session " + sessionId);
+        } catch (SQLException e) {
+            System.err.println("Error registering attendee for session: " + e.getMessage());
+            throw new RuntimeException("Failed to register attendee for session", e);
+        }
+    }
+
+    @Override
+    public void unregisterAttendeeFromSession(UUID attendeeId, UUID sessionId) {
+        String sql = "DELETE FROM attendee_session WHERE attendee_id = ? AND session_id = ?";
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setObject(1, attendeeId);
+            ps.setObject(2, sessionId);
+            ps.executeUpdate();
+            System.out.println("✓ Attendee " + attendeeId + " unregistered from session " + sessionId);
+        } catch (SQLException e) {
+            System.err.println("Error unregistering attendee from session: " + e.getMessage());
+            throw new RuntimeException("Failed to unregister attendee from session", e);
+        }
+    }
+
+    @Override
+    public List<Session> findSessionsForAttendee(UUID attendeeId) {
+        List<Session> list = new ArrayList<>();
+        String sql = """
+            SELECT s.* FROM sessions s
+            INNER JOIN attendee_session ats ON s.id = ats.session_id
+            WHERE ats.attendee_id = ?
+            ORDER BY s.start_time ASC
+        """;
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setObject(1, attendeeId);
+            ResultSet rs = ps.executeQuery();
+
+            Map<UUID, Session> sessionMap = new LinkedHashMap<>();
+            while (rs.next()) {
+                Session s = mapRow(rs);
+                sessionMap.put(s.getId(), s);
+            }
+
+            // Load presenter IDs
+            if (!sessionMap.isEmpty()) {
+                loadPresenterIdsOptimized(sessionMap);
+            }
+
+            list.addAll(sessionMap.values());
+            System.out.println("✓ Found " + list.size() + " sessions for attendee " + attendeeId);
+
+        } catch (SQLException e) {
+            System.err.println("Error finding sessions for attendee: " + e.getMessage());
+            throw new RuntimeException("Failed to find sessions for attendee", e);
+        }
+
+        return list;
+    }
+
+    // -------------------------------------------------------
     // MAPPER
     // -------------------------------------------------------
     private Session mapRow(ResultSet rs) throws SQLException {

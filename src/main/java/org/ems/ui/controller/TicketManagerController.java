@@ -28,7 +28,6 @@ public class TicketManagerController {
 
     // Tab 1: Ticket Templates
     @FXML private ComboBox<String> templateEventCombo;
-    @FXML private ComboBox<String> templateSessionCombo;
     @FXML private ComboBox<String> templateTypeCombo;
     @FXML private TextField templatePriceField;
     @FXML private TableView<TemplateRow> templatesTable;
@@ -259,51 +258,22 @@ public class TicketManagerController {
                     String display = evt.getName() + " (" + evt.getId().toString().substring(0, 8) + ")";
                     eventList.add(display);
                     eventMap.put(display, evt.getId());
+
+                    // Populate cache so loadTemplatesOptimized() can use it immediately
+                    eventCacheById.put(evt.getId(), evt);
                 }
             }
 
             templateEventCombo.setItems(FXCollections.observableArrayList(eventList));
             if (!eventList.isEmpty()) {
                 templateEventCombo.setValue(eventList.get(0));
-                loadSessions(eventMap.get(eventList.get(0)));
             }
-
-            templateEventCombo.setOnAction(e -> {
-                String selected = templateEventCombo.getValue();
-                if (selected != null) {
-                    loadSessions(eventMap.get(selected));
-                }
-            });
 
         } catch (Exception e) {
             System.err.println("Error loading events: " + e.getMessage());
         }
     }
 
-    private void loadSessions(UUID eventId) {
-        try {
-            AppContext context = AppContext.get();
-            List<String> sessionList = new ArrayList<>();
-            sessionMap.clear();
-
-            if (context.sessionRepo != null) {
-                List<Session> sessions = context.sessionRepo.findByEvent(eventId);
-                for (Session sess : sessions) {
-                    String display = sess.getTitle() + " (" + sess.getId().toString().substring(0, 8) + ")";
-                    sessionList.add(display);
-                    sessionMap.put(display, sess.getId());
-                }
-            }
-
-            templateSessionCombo.setItems(FXCollections.observableArrayList(sessionList));
-            if (!sessionList.isEmpty()) {
-                templateSessionCombo.setValue(sessionList.get(0));
-            }
-
-        } catch (Exception e) {
-            System.err.println("Error loading sessions: " + e.getMessage());
-        }
-    }
 
     // ====== Tối ưu load templates ======
 
@@ -370,33 +340,32 @@ public class TicketManagerController {
             // Lấy thống kê assigned từ cache (hoặc query DB 1 lần duy nhất)
             Map<TemplateKey, Long> assignedCountMap = getTemplateAssignedCountCache(runId);
 
-            // Dùng cache event/session theo ID nếu đã có, nếu chưa thì fallback sang repo
             AppContext context = AppContext.get();
             if (templateTickets != null) {
                 for (Ticket ticket : templateTickets) {
                     UUID eventId = ticket.getEventId();
-                    UUID sessionId = ticket.getSessionId();
 
                     String eventName = "Unknown";
-                    String sessionName = "Unknown";
+                    String sessionName = "N/A";
 
+                    // Ưu tiên dùng cache, nếu thiếu thì fallback một lần về repo
                     Event evt = eventId != null ? eventCacheById.get(eventId) : null;
                     if (evt == null && context.eventRepo != null && eventId != null) {
-                        evt = context.eventRepo.findById(eventId);
-                        if (evt != null) eventCacheById.put(eventId, evt);
+                        try {
+                            evt = context.eventRepo.findById(eventId);
+                            if (evt != null) {
+                                eventCacheById.put(eventId, evt);
+                            }
+                        } catch (Exception ignored) {
+                        }
                     }
-                    if (evt != null) eventName = evt.getName();
-
-                    Session sess = sessionId != null ? sessionCacheById.get(sessionId) : null;
-                    if (sess == null && context.sessionRepo != null && sessionId != null) {
-                        sess = context.sessionRepo.findById(sessionId);
-                        if (sess != null) sessionCacheById.put(sessionId, sess);
+                    if (evt != null && evt.getName() != null) {
+                        eventName = evt.getName();
                     }
-                    if (sess != null) sessionName = sess.getTitle();
 
-                    TemplateKey key = new TemplateKey(eventId, sessionId, ticket.getType(), ticket.getPrice());
+                    TemplateKey key = new TemplateKey(eventId, null, ticket.getType(), ticket.getPrice());
                     long assigned = assignedCountMap.getOrDefault(key, 0L);
-                    long available = 100 - assigned; // TODO: thay bằng capacity thực tế nếu có
+                    long available = 100 - assigned;
 
                     result.add(new TemplateRow(
                             eventName,
@@ -426,7 +395,8 @@ public class TicketManagerController {
         List<TicketRepository.TemplateAssignmentStats> statsList = ticketRepo.findAssignedStatsForTemplates();
         Map<TemplateKey, Long> map = new HashMap<>();
         for (TicketRepository.TemplateAssignmentStats s : statsList) {
-            TemplateKey key = new TemplateKey(s.getEventId(), s.getSessionId(), s.getType(), s.getPrice());
+            // Note: sessionId is now null - tickets are event-level only
+            TemplateKey key = new TemplateKey(s.getEventId(), null, s.getType(), s.getPrice());
             map.put(key, s.getAssignedCount());
         }
         templateAssignedCountCache = map;
@@ -442,8 +412,8 @@ public class TicketManagerController {
     @FXML
     public void onCreateTemplate() {
         try {
-            if (templateEventCombo.getValue() == null || templateSessionCombo.getValue() == null) {
-                showAlert("Error", "Please select Event and Session");
+            if (templateEventCombo.getValue() == null) {
+                showAlert("Error", "Please select an Event");
                 return;
             }
 
@@ -454,17 +424,16 @@ public class TicketManagerController {
             }
 
             UUID eventId = eventMap.get(templateEventCombo.getValue());
-            UUID sessionId = sessionMap.get(templateSessionCombo.getValue());
 
-            if (eventId == null || sessionId == null) {
-                showAlert("Error", "Invalid event or session selected");
+            if (eventId == null) {
+                showAlert("Error", "Invalid event selected");
                 return;
             }
 
             Ticket template = new Ticket();
             template.setId(UUID.randomUUID());
             template.setEventId(eventId);
-            template.setSessionId(sessionId);
+            // Tickets are event-level only - no sessionId needed
             template.setType(TicketType.valueOf(templateTypeCombo.getValue()));
             template.setPrice(new BigDecimal(price));
             template.setTicketStatus(TicketStatus.ACTIVE);
@@ -530,33 +499,22 @@ public class TicketManagerController {
 
             AppContext context = AppContext.get();
 
-            // Lấy tất cả ticket templates: attendee_id IS NULL
             List<Ticket> templates = ticketRepo != null ? ticketRepo.findTemplates() : Collections.emptyList();
 
             for (Ticket ticket : templates) {
                 UUID eventId = ticket.getEventId();
-                UUID sessionId = ticket.getSessionId();
 
                 String eventName = "Unknown";
-                String sessionName = "Unknown";
+                String sessionName = "N/A";  // Event-level template, no specific session
 
                 Event evt = eventId != null ? eventCacheById.get(eventId) : null;
-                if (evt == null && context.eventRepo != null && eventId != null) {
-                    evt = context.eventRepo.findById(eventId);
-                    if (evt != null) eventCacheById.put(eventId, evt);
+                if (evt != null) {
+                    eventName = evt.getName();
                 }
-                if (evt != null) eventName = evt.getName();
-
-                Session sess = sessionId != null ? sessionCacheById.get(sessionId) : null;
-                if (sess == null && context.sessionRepo != null && sessionId != null) {
-                    sess = context.sessionRepo.findById(sessionId);
-                    if (sess != null) sessionCacheById.put(sessionId, sess);
-                }
-                if (sess != null) sessionName = sess.getTitle();
 
                 String typeName = ticket.getType() != null ? ticket.getType().name() : "N/A";
                 String priceStr = ticket.getPrice() != null ? ticket.getPrice().toString() : "0";
-                String display = eventName + " - " + sessionName + " (" + typeName + ": $" + priceStr + ")";
+                String display = eventName + " (" + typeName + ": $" + priceStr + ")";
 
                 templateList.add(display);
                 templateMap.put(display, ticket.getId());
@@ -601,32 +559,40 @@ public class TicketManagerController {
                     for (Ticket ticket : assignedTickets) {
                         UUID attendeeId = ticket.getAttendeeId();
                         UUID eventId = ticket.getEventId();
-                        UUID sessionId = ticket.getSessionId();
 
                         String attendeeName = "Unknown";
                         String eventName = "Unknown";
-                        String sessionName = "Unknown";
+                        String sessionName = "N/A";
 
+                        // Attendee: cache trước, nếu thiếu thì fallback sang repo
                         Attendee att = attendeeId != null ? attendeeCacheById.get(attendeeId) : null;
                         if (att == null && context.attendeeRepo != null && attendeeId != null) {
-                            att = context.attendeeRepo.findById(attendeeId);
-                            if (att != null) attendeeCacheById.put(attendeeId, att);
+                            try {
+                                att = context.attendeeRepo.findById(attendeeId);
+                                if (att != null) {
+                                    attendeeCacheById.put(attendeeId, att);
+                                }
+                            } catch (Exception ignored) {
+                            }
                         }
-                        if (att != null) attendeeName = att.getFullName();
+                        if (att != null && att.getFullName() != null) {
+                            attendeeName = att.getFullName();
+                        }
 
+                        // Event: cache trước, nếu thiếu thì fallback sang repo
                         Event evt = eventId != null ? eventCacheById.get(eventId) : null;
                         if (evt == null && context.eventRepo != null && eventId != null) {
-                            evt = context.eventRepo.findById(eventId);
-                            if (evt != null) eventCacheById.put(eventId, evt);
+                            try {
+                                evt = context.eventRepo.findById(eventId);
+                                if (evt != null) {
+                                    eventCacheById.put(eventId, evt);
+                                }
+                            } catch (Exception ignored) {
+                            }
                         }
-                        if (evt != null) eventName = evt.getName();
-
-                        Session sess = sessionId != null ? sessionCacheById.get(sessionId) : null;
-                        if (sess == null && context.sessionRepo != null && sessionId != null) {
-                            sess = context.sessionRepo.findById(sessionId);
-                            if (sess != null) sessionCacheById.put(sessionId, sess);
+                        if (evt != null && evt.getName() != null) {
+                            eventName = evt.getName();
                         }
-                        if (sess != null) sessionName = sess.getTitle();
 
                         tickets.add(new TicketRow(
                                 ticket.getId().toString().substring(0, 8),
@@ -654,9 +620,9 @@ public class TicketManagerController {
         task.setOnSucceeded(event -> {
             AssignedTicketsData data = task.getValue();
             allAssignedTickets = data.tickets;
+            // Không reload attendee/template mỗi lần nếu không cần, nhưng giữ nguyên để đơn giản
             loadAttendees();
             displayAssignedTickets(allAssignedTickets);
-            // Lấy templates từ repo (attendee_id IS NULL) thay vì từ assignedTickets
             loadTemplatesForAssign();
             calculateStatistics();
             System.out.println("[" + (runId != null ? runId : "AssignedTickets") + "] loadAssignedTickets total (task) " +
@@ -790,7 +756,7 @@ public class TicketManagerController {
             newTicket.setId(UUID.randomUUID()); // New ID for the assigned ticket
             newTicket.setAttendeeId(attendeeId); // Assign to attendee
             newTicket.setEventId(templateTicket.getEventId());
-            newTicket.setSessionId(templateTicket.getSessionId());
+            // Note: sessionId not set - tickets are now event-level only
             newTicket.setType(templateTicket.getType());
             newTicket.setPrice(templateTicket.getPrice());
             newTicket.setTicketStatus(TicketStatus.ACTIVE);

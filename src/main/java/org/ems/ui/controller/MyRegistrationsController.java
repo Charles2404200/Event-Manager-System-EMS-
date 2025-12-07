@@ -14,267 +14,242 @@ import org.ems.ui.stage.SceneManager;
 import java.util.*;
 
 /**
+ * Register Sessions Page
  * @author <your group number>
  */
 public class MyRegistrationsController {
 
-    @FXML private TextField searchField;
-    @FXML private ComboBox<String> eventFilterCombo;
-    @FXML private TableView<RegistrationRow> registrationsTable;
+    @FXML private ComboBox<String> eventCombo;
+    @FXML private VBox sessionsContainer;
     @FXML private Label recordCountLabel;
 
-    private List<RegistrationRow> allRegistrations;
+    private List<Session> availableSessions = new ArrayList<>();
+    private Map<String, UUID> eventMap = new HashMap<>();
+    private Map<CheckBox, UUID> sessionCheckMap = new HashMap<>();
     private AppContext appContext;
 
     @FXML
     public void initialize() {
         try {
             appContext = AppContext.get();
-
-            // Setup filter combo
-            eventFilterCombo.setItems(FXCollections.observableArrayList(
-                    "ALL"
-            ));
-            eventFilterCombo.setValue("ALL");
-
-            // Setup table columns
-            setupTableColumns();
-
-            // Load all registrations for current attendee
-            loadMyRegistrations();
-
+            loadEventsWithTickets();
         } catch (Exception e) {
             showAlert("Error", "Failed to initialize: " + e.getMessage());
             e.printStackTrace();
         }
     }
 
-    private void setupTableColumns() {
-        ObservableList<TableColumn<RegistrationRow, ?>> columns = registrationsTable.getColumns();
-
-        if (columns.size() >= 7) {
-            ((TableColumn<RegistrationRow, String>) columns.get(0)).setCellValueFactory(cellData ->
-                new javafx.beans.property.SimpleStringProperty(cellData.getValue().eventName));
-            ((TableColumn<RegistrationRow, String>) columns.get(1)).setCellValueFactory(cellData ->
-                new javafx.beans.property.SimpleStringProperty(cellData.getValue().sessionTitle));
-            ((TableColumn<RegistrationRow, String>) columns.get(2)).setCellValueFactory(cellData ->
-                new javafx.beans.property.SimpleStringProperty(cellData.getValue().sessionStart));
-            ((TableColumn<RegistrationRow, String>) columns.get(3)).setCellValueFactory(cellData ->
-                new javafx.beans.property.SimpleStringProperty(cellData.getValue().sessionEnd));
-            ((TableColumn<RegistrationRow, String>) columns.get(4)).setCellValueFactory(cellData ->
-                new javafx.beans.property.SimpleStringProperty(cellData.getValue().venue));
-            ((TableColumn<RegistrationRow, String>) columns.get(5)).setCellValueFactory(cellData ->
-                new javafx.beans.property.SimpleStringProperty(cellData.getValue().capacity));
-            ((TableColumn<RegistrationRow, String>) columns.get(6)).setCellValueFactory(cellData ->
-                new javafx.beans.property.SimpleStringProperty(cellData.getValue().presenters));
-        }
-    }
-
-    private void loadMyRegistrations() {
+    /**
+     * Load all events where user has tickets
+     */
+    private void loadEventsWithTickets() {
         try {
-            allRegistrations = new ArrayList<>();
-
-            if (appContext.currentUser instanceof Attendee && appContext.ticketRepo != null &&
-                appContext.eventRepo != null && appContext.sessionRepo != null) {
-
+            if (appContext.currentUser instanceof Attendee && appContext.ticketRepo != null && appContext.eventRepo != null) {
                 Attendee attendee = (Attendee) appContext.currentUser;
 
-                // Get all tickets for this attendee
+                // Get all tickets for current attendee
                 List<Ticket> tickets = appContext.ticketRepo.findByAttendee(attendee.getId());
+
+                if (tickets == null || tickets.isEmpty()) {
+                    Label noTicketsLabel = new Label("No tickets yet. Buy a ticket first to register for sessions!");
+                    noTicketsLabel.setStyle("-fx-font-size: 12; -fx-text-fill: #999;");
+                    sessionsContainer.getChildren().add(noTicketsLabel);
+                    return;
+                }
 
                 // Get unique events from tickets
                 Set<UUID> eventIds = new HashSet<>();
-                Map<UUID, List<UUID>> eventToSessions = new HashMap<>();
-
                 for (Ticket ticket : tickets) {
                     if (ticket.getEventId() != null) {
                         eventIds.add(ticket.getEventId());
-                        eventToSessions.computeIfAbsent(ticket.getEventId(), k -> new ArrayList<>())
-                                .add(ticket.getSessionId());
                     }
                 }
 
-                // Load event and session details
-                List<Event> allEvents = appContext.eventRepo.findAll();
-                List<Session> allSessions = appContext.sessionRepo.findAll();
-
-                for (UUID eventId : eventIds) {
-                    Event event = allEvents.stream()
-                        .filter(e -> e.getId().equals(eventId))
-                        .findFirst()
-                        .orElse(null);
-
-                    if (event != null) {
-                        // Get sessions for this event
-                        List<UUID> sessionIds = eventToSessions.get(eventId);
-                        if (sessionIds != null) {
-                            for (UUID sessionId : sessionIds) {
-                                if (sessionId != null) {
-                                    Session session = allSessions.stream()
-                                        .filter(s -> s.getId().equals(sessionId))
-                                        .findFirst()
-                                        .orElse(null);
-
-                                    if (session != null) {
-                                        // Get presenters for this session
-                                        String presentersStr = getPresentersForSession(session, allSessions);
-
-                                        allRegistrations.add(new RegistrationRow(
-                                                event.getName(),
-                                                session.getTitle(),
-                                                session.getStart() != null ? session.getStart().toString() : "N/A",
-                                                session.getEnd() != null ? session.getEnd().toString() : "N/A",
-                                                session.getVenue() != null ? session.getVenue() : "N/A",
-                                                String.valueOf(session.getCapacity()),
-                                                presentersStr
-                                        ));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Load unique events into filter combo
+                // Build event combo
                 List<String> eventNames = new ArrayList<>();
-                eventNames.add("ALL");
+                List<Event> allEvents = appContext.eventRepo.findAll();
+
                 for (UUID eventId : eventIds) {
                     Event event = allEvents.stream()
                         .filter(e -> e.getId().equals(eventId))
                         .findFirst()
                         .orElse(null);
+
                     if (event != null) {
-                        eventNames.add(event.getName());
+                        String display = event.getName();
+                        eventNames.add(display);
+                        eventMap.put(display, eventId);
                     }
                 }
-                eventFilterCombo.setItems(FXCollections.observableArrayList(eventNames));
+
+                eventCombo.setItems(FXCollections.observableArrayList(eventNames));
+                if (!eventNames.isEmpty()) {
+                    eventCombo.setValue(eventNames.get(0));
+                    loadSessionsForEvent(eventMap.get(eventNames.get(0)));
+                }
+
+                // Load sessions when event selected
+                eventCombo.setOnAction(e -> {
+                    String selected = eventCombo.getValue();
+                    if (selected != null && eventMap.containsKey(selected)) {
+                        loadSessionsForEvent(eventMap.get(selected));
+                    }
+                });
+
             }
-
-            displayRegistrations(allRegistrations);
-
         } catch (Exception e) {
-            showAlert("Error", "Failed to load registrations: " + e.getMessage());
+            showAlert("Error", "Failed to load events: " + e.getMessage());
             e.printStackTrace();
         }
     }
 
-    private String getPresentersForSession(Session session, List<Session> allSessions) {
-        // Get presenter IDs from session
-        List<UUID> presenterIds = session.getPresenterIds();
-        if (presenterIds == null || presenterIds.isEmpty()) {
-            return "No presenters assigned";
-        }
-        // TODO: Load presenter names from repository
-        return presenterIds.size() + " presenter(s)";
-    }
-
-    private void displayRegistrations(List<RegistrationRow> registrations) {
-        ObservableList<RegistrationRow> observableList = FXCollections.observableArrayList(registrations);
-        registrationsTable.setItems(observableList);
-        recordCountLabel.setText("Total Registrations: " + registrations.size());
-    }
-
-    @FXML
-    public void onSearch() {
+    /**
+     * Load all sessions for selected event
+     */
+    private void loadSessionsForEvent(UUID eventId) {
         try {
-            String searchTerm = searchField.getText().toLowerCase();
-            String eventFilter = eventFilterCombo.getValue();
+            // Clear previous sessions
+            sessionsContainer.getChildren().clear();
+            sessionCheckMap.clear();
+            availableSessions.clear();
 
-            List<RegistrationRow> filtered = new ArrayList<>();
+            // Get sessions for this event
+            List<Session> sessions = appContext.sessionRepo.findByEvent(eventId);
 
-            for (RegistrationRow reg : allRegistrations) {
-                // Apply event filter
-                if (!eventFilter.equals("ALL") && !reg.eventName.equals(eventFilter)) {
-                    continue;
-                }
+            if (sessions == null || sessions.isEmpty()) {
+                Label noSessionsLabel = new Label("No sessions available for this event");
+                noSessionsLabel.setStyle("-fx-font-size: 12; -fx-text-fill: #999;");
+                sessionsContainer.getChildren().add(noSessionsLabel);
+                recordCountLabel.setText("Total Sessions: 0");
+                return;
+            }
 
-                // Apply search filter
-                if (searchTerm.isEmpty() ||
-                    reg.eventName.toLowerCase().contains(searchTerm) ||
-                    reg.sessionTitle.toLowerCase().contains(searchTerm) ||
-                    reg.venue.toLowerCase().contains(searchTerm)) {
-                    filtered.add(reg);
+            availableSessions = sessions;
+
+            // Add title
+            Label titleLabel = new Label("Select Sessions to Register:");
+            titleLabel.setStyle("-fx-font-size: 12; -fx-font-weight: bold; -fx-text-fill: #2c3e50;");
+            sessionsContainer.getChildren().add(titleLabel);
+
+            // Add separator
+            Separator sep1 = new Separator();
+            sessionsContainer.getChildren().add(sep1);
+
+            // Add checkboxes for each session
+            for (Session session : sessions) {
+                HBox sessionRow = new HBox(10);
+                sessionRow.setPadding(new Insets(8));
+                sessionRow.setStyle("-fx-border-color: #ddd; -fx-border-width: 0 0 1 0; -fx-padding: 8;");
+
+                CheckBox checkbox = new CheckBox();
+                sessionCheckMap.put(checkbox, session.getId());
+
+                String sessionInfo = (session.getTitle() != null ? session.getTitle() : "Unknown") +
+                                   " | " + (session.getStart() != null ? session.getStart().toLocalTime() : "N/A") +
+                                   " | " + (session.getVenue() != null ? session.getVenue() : "N/A");
+
+                Label sessionLabel = new Label(sessionInfo);
+                sessionLabel.setStyle("-fx-font-size: 11; -fx-text-fill: #333;");
+
+                String capacity = session.getCapacity() + " seats";
+                Label capacityLabel = new Label(capacity);
+                capacityLabel.setStyle("-fx-font-size: 10; -fx-text-fill: #666;");
+
+                sessionRow.getChildren().addAll(checkbox, sessionLabel, capacityLabel);
+                sessionsContainer.getChildren().add(sessionRow);
+            }
+
+            // Add separator
+            Separator sep2 = new Separator();
+            sessionsContainer.getChildren().add(sep2);
+
+            // Add action buttons
+            HBox buttonBox = new HBox(10);
+            buttonBox.setPadding(new Insets(10));
+
+            Button saveButton = new Button("Save Registration");
+            saveButton.setStyle("-fx-padding: 8 15; -fx-font-size: 11; -fx-cursor: hand;");
+            saveButton.setOnAction(e -> saveRegistrations());
+
+            Button clearButton = new Button("Clear All");
+            clearButton.setStyle("-fx-padding: 8 15; -fx-font-size: 11; -fx-cursor: hand;");
+            clearButton.setOnAction(e -> clearAllSelections());
+
+            Button selectAllButton = new Button("Select All");
+            selectAllButton.setStyle("-fx-padding: 8 15; -fx-font-size: 11; -fx-cursor: hand;");
+            selectAllButton.setOnAction(e -> selectAllSessions());
+
+            buttonBox.getChildren().addAll(saveButton, clearButton, selectAllButton);
+            sessionsContainer.getChildren().add(buttonBox);
+
+            recordCountLabel.setText("Total Sessions: " + sessions.size());
+
+        } catch (Exception e) {
+            showAlert("Error", "Failed to load sessions: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Save selected sessions registration
+     */
+    @FXML
+    private void saveRegistrations() {
+        try {
+            List<UUID> selectedSessions = new ArrayList<>();
+
+            for (CheckBox checkbox : sessionCheckMap.keySet()) {
+                if (checkbox.isSelected()) {
+                    selectedSessions.add(sessionCheckMap.get(checkbox));
                 }
             }
 
-            displayRegistrations(filtered);
-
-        } catch (Exception e) {
-            showAlert("Error", "Search failed: " + e.getMessage());
-        }
-    }
-
-    @FXML
-    public void onReset() {
-        searchField.clear();
-        eventFilterCombo.setValue("ALL");
-        displayRegistrations(allRegistrations);
-    }
-
-    @FXML
-    public void onViewSessionDetails() {
-        RegistrationRow selected = registrationsTable.getSelectionModel().getSelectedItem();
-        if (selected == null) {
-            showAlert("Warning", "Please select a session to view details");
-            return;
-        }
-
-        Alert alert = new Alert(Alert.AlertType.INFORMATION);
-        alert.setTitle("Session Details");
-        alert.setHeaderText("Registration Details");
-        alert.setContentText(
-                "Event: " + selected.eventName + "\n\n" +
-                "Session: " + selected.sessionTitle + "\n" +
-                "Start: " + selected.sessionStart + "\n" +
-                "End: " + selected.sessionEnd + "\n" +
-                "Venue: " + selected.venue + "\n" +
-                "Capacity: " + selected.capacity + "\n" +
-                "Presenters: " + selected.presenters
-        );
-        alert.showAndWait();
-    }
-
-    @FXML
-    public void onCancelRegistration() {
-        RegistrationRow selected = registrationsTable.getSelectionModel().getSelectedItem();
-        if (selected == null) {
-            showAlert("Warning", "Please select a registration to cancel");
-            return;
-        }
-
-        Alert confirmAlert = new Alert(Alert.AlertType.CONFIRMATION);
-        confirmAlert.setTitle("Confirm Cancellation");
-        confirmAlert.setHeaderText("Cancel Registration");
-        confirmAlert.setContentText("Are you sure you want to cancel registration for:\n" + selected.sessionTitle + "?");
-
-        if (confirmAlert.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
-            // TODO: Implement cancel registration logic
-            showAlert("Success", "Registration cancelled for: " + selected.sessionTitle);
-            loadMyRegistrations();
-        }
-    }
-
-    @FXML
-    public void onExportRegistrations() {
-        try {
-            StringBuilder csv = new StringBuilder();
-            csv.append("Event,Session,Start Time,End Time,Venue,Capacity,Presenters\n");
-
-            for (RegistrationRow reg : allRegistrations) {
-                csv.append(reg.eventName).append(",")
-                   .append(reg.sessionTitle).append(",")
-                   .append(reg.sessionStart).append(",")
-                   .append(reg.sessionEnd).append(",")
-                   .append(reg.venue).append(",")
-                   .append(reg.capacity).append(",")
-                   .append(reg.presenters).append("\n");
+            if (selectedSessions.isEmpty()) {
+                showAlert("Warning", "Please select at least one session to register");
+                return;
             }
 
-            // TODO: Save CSV to file
-            showAlert("Success", "Export feature coming soon!");
+            // Register attendee for each selected session
+            if (appContext.currentUser instanceof Attendee && appContext.sessionRepo != null) {
+                Attendee attendee = (Attendee) appContext.currentUser;
+                int successCount = 0;
+
+                for (UUID sessionId : selectedSessions) {
+                    try {
+                        appContext.sessionRepo.registerAttendeeForSession(attendee.getId(), sessionId);
+                        successCount++;
+                    } catch (Exception e) {
+                        System.err.println("Failed to register for session " + sessionId + ": " + e.getMessage());
+                    }
+                }
+
+                showAlert("Success", "Successfully registered for " + successCount + " session(s)!");
+                System.out.println("✓ Attendee " + attendee.getId() + " registered for " + successCount + " sessions");
+            }
 
         } catch (Exception e) {
-            showAlert("Error", "Export failed: " + e.getMessage());
+            showAlert("Error", "Failed to save registrations: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Clear all selections
+     */
+    @FXML
+    private void clearAllSelections() {
+        for (CheckBox checkbox : sessionCheckMap.keySet()) {
+            checkbox.setSelected(false);
+        }
+    }
+
+    /**
+     * Select all sessions
+     */
+    @FXML
+    private void selectAllSessions() {
+        for (CheckBox checkbox : sessionCheckMap.keySet()) {
+            checkbox.setSelected(true);
         }
     }
 
@@ -289,37 +264,6 @@ public class MyRegistrationsController {
         alert.setHeaderText(null);
         alert.setContentText(message);
         alert.showAndWait();
-    }
-
-    // Helper class
-    public static class RegistrationRow {
-        public String eventName;
-        public String sessionTitle;
-        public String sessionStart;
-        public String sessionEnd;
-        public String venue;
-        public String capacity;
-        public String presenters;
-
-        public RegistrationRow(String eventName, String sessionTitle, String sessionStart,
-                              String sessionEnd, String venue, String capacity, String presenters) {
-            this.eventName = eventName;
-            this.sessionTitle = sessionTitle;
-            this.sessionStart = sessionStart;
-            this.sessionEnd = sessionEnd;
-            this.venue = venue;
-            this.capacity = capacity;
-            this.presenters = presenters;
-        }
-
-        // Getters for TableView binding
-        public String getEventName() { return eventName; }
-        public String getSessionTitle() { return sessionTitle; }
-        public String getSessionStart() { return sessionStart; }
-        public String getSessionEnd() { return sessionEnd; }
-        public String getVenue() { return venue; }
-        public String getCapacity() { return capacity; }
-        public String getPresenters() { return presenters; }
     }
 }
 

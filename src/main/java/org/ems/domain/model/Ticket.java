@@ -13,7 +13,8 @@ public class Ticket {
 
     private UUID attendeeId;
     private UUID eventId;
-    private UUID sessionId;
+    // Note: sessionId removed - tickets are now event-level only
+    // Attendees register for sessions separately after purchasing ticket
 
     private TicketType type;
     private BigDecimal price;
@@ -52,13 +53,7 @@ public class Ticket {
         this.eventId = eventId;
     }
 
-    public UUID getSessionId() {
-        return sessionId;
-    }
-
-    public void setSessionId(UUID sessionId) {
-        this.sessionId = sessionId;
-    }
+    // sessionId getter/setter removed - no longer session-specific
 
     public TicketType getType() {
         return type;

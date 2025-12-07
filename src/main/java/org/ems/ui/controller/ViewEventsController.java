@@ -5,7 +5,11 @@ import javafx.collections.FXCollections;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
 import javafx.scene.layout.VBox;
+import javafx.scene.layout.HBox;
 import javafx.geometry.Insets;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
+import org.ems.application.service.ImageService;
 import org.ems.config.AppContext;
 import org.ems.domain.model.*;
 import org.ems.domain.repository.EventRepository;
@@ -17,6 +21,8 @@ import org.ems.ui.stage.SceneManager;
 import org.ems.ui.util.AsyncTaskService;
 import org.ems.ui.util.ProgressLoadingDialog;
 
+import java.io.File;
+import java.io.FileInputStream;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -42,6 +48,7 @@ public class ViewEventsController {
     private EventRepository eventRepo;
     private SessionRepository sessionRepo;
     private PresenterRepository presenterRepo;
+    private ImageService imageService;
     private AppContext appContext;
 
     // Pagination settings
@@ -50,9 +57,10 @@ public class ViewEventsController {
     private int totalPages = 0;
     private long totalEvents = 0;
 
-    // Cache for presenters/sessions and current page
+    // Cache for presenters/sessions, images and current page
     private final Map<UUID, Presenter> presenterCache = new HashMap<>();
     private final Map<UUID, List<Session>> sessionCache = new HashMap<>();
+    private final Map<UUID, Image> imageCache = new HashMap<>();
     private final Set<UUID> userRegisteredEvents = new HashSet<>();
     private List<EventRow> currentPageCache = new ArrayList<>();
 
@@ -63,6 +71,7 @@ public class ViewEventsController {
             eventRepo = appContext.eventRepo;
             sessionRepo = appContext.sessionRepo;
             presenterRepo = appContext.presenterRepo;
+            imageService = appContext.imageService;
 
             typeFilterCombo.setItems(FXCollections.observableArrayList(
                     "ALL", "CONFERENCE", "WORKSHOP", "CONCERT", "EXHIBITION", "SEMINAR"
@@ -90,26 +99,74 @@ public class ViewEventsController {
 
     private void setupTableColumns() {
         // Columns are defined in FXML in order:
-        // 0: Event Name, 1: Type, 2: Location, 3: Start Date, 4: End Date, 5: Status, 6: Sessions, 7: Registered
+        // 0: Image, 1: Event Name, 2: Type, 3: Location, 4: Start Date, 5: End Date, 6: Status, 7: Sessions, 8: Registered
         if (eventsTable == null) return;
         var columns = eventsTable.getColumns();
-        if (columns.size() < 8) return;
+        if (columns.size() < 9) return;
 
-        ((TableColumn<EventRow, String>) columns.get(0)).setCellValueFactory(cd ->
-                new SimpleStringProperty(cd.getValue().name));
+        // Image column with thumbnail preview
+        TableColumn<EventRow, String> imageCol = (TableColumn<EventRow, String>) columns.get(0);
+        imageCol.setCellValueFactory(cd -> new SimpleStringProperty(cd.getValue().eventId.toString()));
+        imageCol.setCellFactory(col -> new TableCell<EventRow, String>() {
+            @Override
+            protected void updateItem(String eventId, boolean empty) {
+                super.updateItem(eventId, empty);
+                if (empty || eventId == null) {
+                    setGraphic(null);
+                    return;
+                }
+
+                try {
+                    EventRow row = getTableView().getItems().get(getIndex());
+                    UUID eventUUID = UUID.fromString(eventId);
+                    Event event = eventRepo.findById(eventUUID);
+
+                    if (event != null && event.getImagePath() != null && !event.getImagePath().isEmpty()) {
+                        Image cachedImage = imageCache.get(eventUUID);
+                        if (cachedImage == null) {
+                            cachedImage = loadImage(event.getImagePath());
+                            if (cachedImage != null) {
+                                imageCache.put(eventUUID, cachedImage);
+                            }
+                        }
+
+                        if (cachedImage != null) {
+                            ImageView imageView = new ImageView(cachedImage);
+                            imageView.setFitWidth(80);
+                            imageView.setFitHeight(60);
+                            imageView.setPreserveRatio(true);
+                            imageView.setStyle("-fx-border-color: #ddd; -fx-border-width: 1; -fx-border-radius: 3;");
+                            setGraphic(imageView);
+                        } else {
+                            setText("❌");
+                            setStyle("-fx-alignment: center;");
+                        }
+                    } else {
+                        setText("📷");
+                        setStyle("-fx-alignment: center; -fx-text-fill: #999;");
+                    }
+                } catch (Exception e) {
+                    setText("❌");
+                    setStyle("-fx-alignment: center;");
+                }
+            }
+        });
+
         ((TableColumn<EventRow, String>) columns.get(1)).setCellValueFactory(cd ->
-                new SimpleStringProperty(cd.getValue().type));
+                new SimpleStringProperty(cd.getValue().name));
         ((TableColumn<EventRow, String>) columns.get(2)).setCellValueFactory(cd ->
-                new SimpleStringProperty(cd.getValue().location));
+                new SimpleStringProperty(cd.getValue().type));
         ((TableColumn<EventRow, String>) columns.get(3)).setCellValueFactory(cd ->
-                new SimpleStringProperty(cd.getValue().startDate));
+                new SimpleStringProperty(cd.getValue().location));
         ((TableColumn<EventRow, String>) columns.get(4)).setCellValueFactory(cd ->
-                new SimpleStringProperty(cd.getValue().endDate));
+                new SimpleStringProperty(cd.getValue().startDate));
         ((TableColumn<EventRow, String>) columns.get(5)).setCellValueFactory(cd ->
-                new SimpleStringProperty(cd.getValue().status));
+                new SimpleStringProperty(cd.getValue().endDate));
         ((TableColumn<EventRow, String>) columns.get(6)).setCellValueFactory(cd ->
-                new SimpleStringProperty(String.valueOf(cd.getValue().sessionCount)));
+                new SimpleStringProperty(cd.getValue().status));
         ((TableColumn<EventRow, String>) columns.get(7)).setCellValueFactory(cd ->
+                new SimpleStringProperty(String.valueOf(cd.getValue().sessionCount)));
+        ((TableColumn<EventRow, String>) columns.get(8)).setCellValueFactory(cd ->
                 new SimpleStringProperty(cd.getValue().isRegistered ? "✓ Yes" : "No"));
     }
 
@@ -344,13 +401,7 @@ public class ViewEventsController {
             showAlert("Warning", "Please select an event");
             return;
         }
-        showAlert("Event Details", "Event: " + selected.name + "\n\n" +
-                "Type: " + selected.type + "\n" +
-                "Location: " + selected.location + "\n" +
-                "Start: " + selected.startDate + "\n" +
-                "End: " + selected.endDate + "\n" +
-                "Status: " + selected.status + "\n" +
-                "Sessions: " + selected.sessionCount);
+        showEventDetailsWithImage(selected);
     }
 
     @FXML
@@ -414,7 +465,7 @@ public class ViewEventsController {
                     newTicket.setId(UUID.randomUUID());
                     newTicket.setAttendeeId(attendee.getId());
                     newTicket.setEventId(selectedTemplate.getEventId());
-                    newTicket.setSessionId(selectedTemplate.getSessionId());
+                    // Note: sessionId removed - tickets are now event-level only
                     newTicket.setType(selectedTemplate.getType());
                     newTicket.setPrice(selectedTemplate.getPrice());
                     newTicket.setTicketStatus(TicketStatus.ACTIVE);
@@ -529,6 +580,131 @@ public class ViewEventsController {
     @FXML
     public void onBack() {
         SceneManager.switchTo("dashboard.fxml", "Event Manager System - Dashboard");
+    }
+
+    /**
+     * Load and cache image from file path
+     * @param imagePath Path to image file
+     * @return Image object or null if failed
+     */
+    private Image loadImage(String imagePath) {
+        if (imagePath == null || imagePath.isEmpty()) {
+            return null;
+        }
+
+        try {
+            File imageFile = new File(imagePath);
+            if (imageFile.exists()) {
+                return new Image(new FileInputStream(imageFile));
+            }
+        } catch (Exception e) {
+            System.err.println("Failed to load image: " + e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * Show event details dialog with image
+     * @param selected Selected EventRow
+     */
+    private void showEventDetailsWithImage(EventRow selected) {
+        try {
+            Event event = eventRepo.findById(selected.eventId);
+            if (event == null) {
+                showAlert("Error", "Event not found");
+                return;
+            }
+
+            Dialog<Void> dialog = new Dialog<>();
+            dialog.setTitle("Event Details");
+            dialog.setHeaderText(selected.name);
+
+            VBox content = new VBox(15);
+            content.setPadding(new Insets(20));
+            content.setStyle("-fx-font-size: 12;");
+
+            // Event image section
+            VBox imageSection = new VBox(10);
+            imageSection.setStyle("-fx-border-color: #cccccc; -fx-border-width: 1; -fx-padding: 10; -fx-border-radius: 5;");
+
+            if (event.getImagePath() != null && !event.getImagePath().isEmpty()) {
+                Image eventImage = loadImage(event.getImagePath());
+                if (eventImage != null) {
+                    ImageView imageView = new ImageView(eventImage);
+                    imageView.setFitWidth(400);
+                    imageView.setFitHeight(250);
+                    imageView.setPreserveRatio(true);
+                    imageView.setStyle("-fx-border-color: #999999; -fx-border-width: 1;");
+                    imageSection.getChildren().add(imageView);
+                } else {
+                    Label noImageLabel = new Label("❌ Image not available");
+                    noImageLabel.setStyle("-fx-font-size: 12; -fx-text-fill: #999;");
+                    imageSection.getChildren().add(noImageLabel);
+                }
+            } else {
+                Label noImageLabel = new Label("📷 No image for this event");
+                noImageLabel.setStyle("-fx-font-size: 12; -fx-text-fill: #999;");
+                imageSection.getChildren().add(noImageLabel);
+            }
+
+            // Event details section
+            VBox detailsSection = new VBox(10);
+            detailsSection.setStyle("-fx-border-color: #cccccc; -fx-border-width: 1; -fx-padding: 15; -fx-border-radius: 5;");
+
+            Label typeLabel = new Label("🏷️  Type: " + selected.type);
+            Label locationLabel = new Label("📍 Location: " + selected.location);
+            Label startDateLabel = new Label("📅 Start Date: " + selected.startDate);
+            Label endDateLabel = new Label("📅 End Date: " + selected.endDate);
+            Label statusLabel = new Label("⚡ Status: " + selected.status);
+            Label sessionsLabel = new Label("🎤 Sessions: " + selected.sessionCount);
+
+            // Style labels
+            for (Label label : Arrays.asList(typeLabel, locationLabel, startDateLabel, endDateLabel, statusLabel, sessionsLabel)) {
+                label.setStyle("-fx-font-size: 12; -fx-padding: 5;");
+                label.setWrapText(true);
+            }
+
+            detailsSection.getChildren().addAll(typeLabel, locationLabel, startDateLabel, endDateLabel, statusLabel, sessionsLabel);
+
+            // Description section (if available)
+            if (event.getName() != null && !event.getName().isEmpty()) {
+                Label descLabel = new Label("ℹ️  About: " + event.getName());
+                descLabel.setStyle("-fx-font-size: 12; -fx-padding: 5; -fx-wrap-text: true;");
+                descLabel.setWrapText(true);
+                detailsSection.getChildren().add(new Separator());
+                detailsSection.getChildren().add(descLabel);
+            }
+
+            // Registration status
+            if (selected.isRegistered) {
+                Label registeredLabel = new Label("✅ You are registered for this event");
+                registeredLabel.setStyle("-fx-font-size: 12; -fx-text-fill: #27ae60; -fx-padding: 10; -fx-background-color: #e8f8f5; -fx-border-radius: 3;");
+                detailsSection.getChildren().add(new Separator());
+                detailsSection.getChildren().add(registeredLabel);
+            }
+
+            // Add all sections to main content
+            content.getChildren().addAll(
+                    new Label("Event Image:") {{ setStyle("-fx-font-weight: bold; -fx-font-size: 13;"); }},
+                    imageSection,
+                    new Label("Event Information:") {{ setStyle("-fx-font-weight: bold; -fx-font-size: 13;"); }},
+                    detailsSection
+            );
+
+            // Create scrollable content
+            ScrollPane scrollPane = new ScrollPane(content);
+            scrollPane.setFitToWidth(true);
+            scrollPane.setPrefWidth(600);
+            scrollPane.setPrefHeight(600);
+
+            dialog.getDialogPane().setContent(scrollPane);
+            dialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
+            dialog.showAndWait();
+
+        } catch (Exception e) {
+            showAlert("Error", "Failed to load event details: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 
     private void showAlert(String title, String message) {

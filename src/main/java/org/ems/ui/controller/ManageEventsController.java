@@ -7,6 +7,10 @@ import javafx.fxml.FXML;
 import javafx.scene.control.*;
 import javafx.scene.layout.VBox;
 import javafx.geometry.Insets;
+import javafx.stage.FileChooser;
+import javafx.stage.Stage;
+import org.ems.application.service.EventService;
+import org.ems.application.service.ImageService;
 import org.ems.config.AppContext;
 import org.ems.domain.model.Event;
 import org.ems.domain.model.enums.EventType;
@@ -15,6 +19,7 @@ import org.ems.domain.repository.EventRepository;
 import org.ems.infrastructure.repository.jdbc.JdbcEventRepository;
 import org.ems.ui.stage.SceneManager;
 
+import java.io.File;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -29,6 +34,8 @@ public class ManageEventsController {
     @FXML private Label recordCountLabel;
 
     private EventRepository eventRepo;
+    private EventService eventService;
+    private ImageService imageService;
     private List<EventRow> allEvents;
 
     @FXML
@@ -36,6 +43,8 @@ public class ManageEventsController {
         try {
             AppContext context = AppContext.get();
             eventRepo = context.eventRepo;
+            eventService = context.eventService;
+            imageService = context.imageService;
 
             typeFilterCombo.setItems(FXCollections.observableArrayList(
                     "ALL", "CONFERENCE", "WORKSHOP", "CONCERT", "EXHIBITION", "SEMINAR"
@@ -241,6 +250,29 @@ public class ManageEventsController {
             statusCombo.setValue("SCHEDULED");
             statusCombo.setPrefWidth(300);
 
+            // Image upload fields
+            Label imageLabel = new Label("No image selected");
+            imageLabel.setStyle("-fx-text-fill: #666666; -fx-font-size: 12;");
+            Button uploadImageBtn = new Button("Select Image");
+            uploadImageBtn.setPrefWidth(300);
+
+            final String[] selectedImagePath = {null};
+
+            uploadImageBtn.setOnAction(e -> {
+                FileChooser fileChooser = new FileChooser();
+                fileChooser.setTitle("Select Event Image");
+                fileChooser.getExtensionFilters().addAll(
+                    new FileChooser.ExtensionFilter("Image Files", "*.jpg", "*.jpeg", "*.png", "*.gif", "*.bmp"),
+                    new FileChooser.ExtensionFilter("All Files", "*.*")
+                );
+                File selectedFile = fileChooser.showOpenDialog(new Stage());
+                if (selectedFile != null) {
+                    selectedImagePath[0] = selectedFile.getAbsolutePath();
+                    imageLabel.setText("Selected: " + selectedFile.getName());
+                    imageLabel.setStyle("-fx-text-fill: #008000; -fx-font-size: 12;");
+                }
+            });
+
             // Create form layout
             VBox formBox = new VBox(10);
             formBox.setPadding(new Insets(10));
@@ -256,7 +288,10 @@ public class ManageEventsController {
                     new Label("End Date:"),
                     endDatePicker,
                     new Label("Status:"),
-                    statusCombo
+                    statusCombo,
+                    new Label("Event Image:"),
+                    uploadImageBtn,
+                    imageLabel
             );
 
             dialog.getDialogPane().setContent(formBox);
@@ -293,8 +328,18 @@ public class ManageEventsController {
 
                 eventRepo.save(event);
 
-                showAlert("Success", "Event '" + eventName + "' created successfully!");
-                // Dùng hàm async tối ưu thay cho hàm cũ không tồn tại
+                // Upload image if selected
+                if (selectedImagePath[0] != null && !selectedImagePath[0].isEmpty()) {
+                    boolean imageUploadSuccess = eventService.uploadEventImage(selectedImagePath[0], event.getId());
+                    if (imageUploadSuccess) {
+                        showAlert("Success", "Event '" + eventName + "' created successfully with image!");
+                    } else {
+                        showAlert("Warning", "Event created but image upload failed. You can update the image later.");
+                    }
+                } else {
+                    showAlert("Success", "Event '" + eventName + "' created successfully!");
+                }
+
                 loadAllEventsAsync(); // Refresh table
 
             }
@@ -312,9 +357,145 @@ public class ManageEventsController {
             showAlert("Warning", "Please select an event to edit");
             return;
         }
-        System.out.println("Edit Event clicked: " + selected.name);
-        // TODO: Implement edit event dialog
-        showAlert("Info", "Edit Event feature coming soon!");
+
+        try {
+            UUID eventId = UUID.fromString(selected.id);
+            Event event = eventRepo.findById(eventId);
+
+            if (event == null) {
+                showAlert("Error", "Event not found");
+                return;
+            }
+
+            Dialog<ButtonType> dialog = new Dialog<>();
+            dialog.setTitle("Edit Event");
+            dialog.setHeaderText("Edit event: " + event.getName());
+
+            // Create form fields with current values
+            TextField eventNameField = new TextField(event.getName());
+            eventNameField.setPrefWidth(300);
+
+            ComboBox<String> typeCombo = new ComboBox<>();
+            typeCombo.setItems(FXCollections.observableArrayList(
+                    "CONFERENCE", "WORKSHOP", "CONCERT", "EXHIBITION", "SEMINAR"
+            ));
+            typeCombo.setValue(event.getType().name());
+            typeCombo.setPrefWidth(300);
+
+            TextField locationField = new TextField(event.getLocation());
+            locationField.setPrefWidth(300);
+
+            DatePicker startDatePicker = new DatePicker(event.getStartDate());
+            startDatePicker.setPrefWidth(300);
+
+            DatePicker endDatePicker = new DatePicker(event.getEndDate());
+            endDatePicker.setPrefWidth(300);
+
+            ComboBox<String> statusCombo = new ComboBox<>();
+            statusCombo.setItems(FXCollections.observableArrayList(
+                    "SCHEDULED", "ONGOING", "COMPLETED", "CANCELLED"
+            ));
+            statusCombo.setValue(event.getStatus().name());
+            statusCombo.setPrefWidth(300);
+
+            // Image upload fields
+            Label imageLabel = new Label(event.getImagePath() != null && !event.getImagePath().isEmpty()
+                    ? "Current: " + new File(event.getImagePath()).getName()
+                    : "No image");
+            imageLabel.setStyle("-fx-text-fill: #666666; -fx-font-size: 12;");
+            Button uploadImageBtn = new Button("Change Image");
+            uploadImageBtn.setPrefWidth(300);
+
+            final String[] selectedImagePath = {null};
+
+            uploadImageBtn.setOnAction(e -> {
+                FileChooser fileChooser = new FileChooser();
+                fileChooser.setTitle("Select Event Image");
+                fileChooser.getExtensionFilters().addAll(
+                    new FileChooser.ExtensionFilter("Image Files", "*.jpg", "*.jpeg", "*.png", "*.gif", "*.bmp"),
+                    new FileChooser.ExtensionFilter("All Files", "*.*")
+                );
+                File selectedFile = fileChooser.showOpenDialog(new Stage());
+                if (selectedFile != null) {
+                    selectedImagePath[0] = selectedFile.getAbsolutePath();
+                    imageLabel.setText("New: " + selectedFile.getName());
+                    imageLabel.setStyle("-fx-text-fill: #008000; -fx-font-size: 12;");
+                }
+            });
+
+            // Create form layout
+            VBox formBox = new VBox(10);
+            formBox.setPadding(new Insets(10));
+            formBox.getChildren().addAll(
+                    new Label("Event Name:"),
+                    eventNameField,
+                    new Label("Type:"),
+                    typeCombo,
+                    new Label("Location:"),
+                    locationField,
+                    new Label("Start Date:"),
+                    startDatePicker,
+                    new Label("End Date:"),
+                    endDatePicker,
+                    new Label("Status:"),
+                    statusCombo,
+                    new Label("Event Image:"),
+                    uploadImageBtn,
+                    imageLabel
+            );
+
+            dialog.getDialogPane().setContent(formBox);
+            dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+
+            if (dialog.showAndWait().isPresent() && dialog.showAndWait().get() == ButtonType.OK) {
+                // Validate inputs
+                String eventName = eventNameField.getText();
+                String type = typeCombo.getValue();
+                String location = locationField.getText();
+                LocalDate startDate = startDatePicker.getValue();
+                LocalDate endDate = endDatePicker.getValue();
+                String status = statusCombo.getValue();
+
+                if (eventName.isBlank() || location.isBlank() || startDate == null || endDate == null) {
+                    showAlert("Validation Error", "Please fill in all required fields");
+                    return;
+                }
+
+                if (endDate.isBefore(startDate)) {
+                    showAlert("Validation Error", "End date must be after start date");
+                    return;
+                }
+
+                // Update event
+                event.setName(eventName);
+                event.setType(EventType.valueOf(type));
+                event.setLocation(location);
+                event.setStartDate(startDate);
+                event.setEndDate(endDate);
+                event.setStatus(EventStatus.valueOf(status));
+
+                eventRepo.save(event);
+
+                // Upload new image if selected
+                if (selectedImagePath[0] != null && !selectedImagePath[0].isEmpty()) {
+                    boolean imageUploadSuccess = eventService.uploadEventImage(selectedImagePath[0], event.getId());
+                    if (imageUploadSuccess) {
+                        showAlert("Success", "Event updated successfully with new image!");
+                    } else {
+                        showAlert("Warning", "Event updated but image upload failed.");
+                    }
+                } else {
+                    showAlert("Success", "Event '" + eventName + "' updated successfully!");
+                }
+
+                loadAllEventsAsync(); // Refresh table
+
+            }
+        } catch (Exception e) {
+            showAlert("Error", "Failed to edit event: " + e.getMessage());
+            System.err.println("Edit event error: " + e.getMessage());
+            e.printStackTrace(System.err);
+        }
     }
 
     @FXML

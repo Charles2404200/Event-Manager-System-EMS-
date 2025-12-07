@@ -62,14 +62,15 @@
                 <!-- Events Table (Hidden while loading) -->
                 <TableView fx:id="eventsTable" prefHeight="500" VBox.vgrow="ALWAYS" visible="false" managed="false">
                     <columns>
-                        <TableColumn text="Event Name" prefWidth="200" sortable="true"/>
-                        <TableColumn text="Type" prefWidth="120" sortable="true"/>
-                        <TableColumn text="Location" prefWidth="150" sortable="true"/>
-                        <TableColumn text="Start Date" prefWidth="120" sortable="true"/>
-                        <TableColumn text="End Date" prefWidth="120" sortable="true"/>
-                        <TableColumn text="Status" prefWidth="100" sortable="true"/>
-                        <TableColumn text="Sessions" prefWidth="100" sortable="true"/>
-                        <TableColumn text="Registered" prefWidth="100" sortable="true"/>
+                        <TableColumn text="🖼️  Image" prefWidth="100" sortable="false"/>
+                        <TableColumn text="Event Name" prefWidth="180" sortable="true"/>
+                        <TableColumn text="Type" prefWidth="110" sortable="true"/>
+                        <TableColumn text="Location" prefWidth="140" sortable="true"/>
+                        <TableColumn text="Start Date" prefWidth="110" sortable="true"/>
+                        <TableColumn text="End Date" prefWidth="110" sortable="true"/>
+                        <TableColumn text="Status" prefWidth="90" sortable="true"/>
+                        <TableColumn text="Sessions" prefWidth="80" sortable="true"/>
+                        <TableColumn text="Registered" prefWidth="90" sortable="true"/>
                     </columns>
                 </TableView>
 

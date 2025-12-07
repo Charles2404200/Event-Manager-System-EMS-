@@ -88,19 +88,29 @@ CREATE TABLE IF NOT EXISTS attendee_event (
 );
 
 -- ===========================================================
--- TICKETS
+-- TICKETS (Event-level only, not session-specific)
 -- ===========================================================
 CREATE TABLE IF NOT EXISTS tickets (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     attendee_id UUID REFERENCES attendees(id) ON DELETE SET NULL,
     event_id UUID REFERENCES events(id) ON DELETE SET NULL,
-    session_id UUID REFERENCES sessions(id) ON DELETE SET NULL,
     type TEXT NOT NULL,                 -- GENERAL, VIP, EARLY_BIRD
     status TEXT DEFAULT 'ACTIVE',       -- ACTIVE, USED, CANCELLED
     payment_status TEXT DEFAULT 'PAID', -- PAID, UNPAID, REFUNDED
     qr_code_data TEXT,
     price NUMERIC(10, 2) NOT NULL,
     created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- ===========================================================
+-- TICKET SESSION REGISTRATION (many-to-many)
+-- Attendees with tickets can register for sessions in the event
+-- ===========================================================
+CREATE TABLE IF NOT EXISTS ticket_session_registration (
+    ticket_id UUID REFERENCES tickets(id) ON DELETE CASCADE,
+    session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
+    registered_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (ticket_id, session_id)
 );
 
 -- ===========================================================

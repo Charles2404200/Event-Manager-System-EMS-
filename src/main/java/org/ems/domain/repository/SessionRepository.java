@@ -39,4 +39,19 @@ public interface SessionRepository {
      * Batch count sessions for multiple events using GROUP BY.
      */
     java.util.Map<java.util.UUID, Integer> countByEventIds(java.util.List<java.util.UUID> eventIds);
+
+    /**
+     * Register attendee for a session
+     */
+    void registerAttendeeForSession(UUID attendeeId, UUID sessionId);
+
+    /**
+     * Unregister attendee from a session
+     */
+    void unregisterAttendeeFromSession(UUID attendeeId, UUID sessionId);
+
+    /**
+     * Get all sessions registered for an attendee
+     */
+    List<Session> findSessionsForAttendee(UUID attendeeId);
 }

@@ -25,12 +25,11 @@ public class JdbcTicketRepository implements TicketRepository {
 
         String sql = """
             INSERT INTO tickets
-            (id, attendee_id, event_id, session_id, type, price, payment_status, status, qr_code_data)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (id, attendee_id, event_id, type, price, payment_status, status, qr_code_data)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (id) DO UPDATE SET
                 attendee_id    = EXCLUDED.attendee_id,
                 event_id       = EXCLUDED.event_id,
-                session_id     = EXCLUDED.session_id,
                 type           = EXCLUDED.type,
                 price          = EXCLUDED.price,
                 payment_status = EXCLUDED.payment_status,
@@ -43,12 +42,11 @@ public class JdbcTicketRepository implements TicketRepository {
             ps.setObject(1, t.getId());
             ps.setObject(2, t.getAttendeeId());
             ps.setObject(3, t.getEventId());
-            ps.setObject(4, t.getSessionId());
-            ps.setString(5, t.getType().name());
-            ps.setBigDecimal(6, t.getPrice());
-            ps.setString(7, t.getPaymentStatus().name());
-            ps.setString(8, t.getTicketStatus().name());
-            ps.setString(9, t.getQrCodeData());
+            ps.setString(4, t.getType().name());
+            ps.setBigDecimal(5, t.getPrice());
+            ps.setString(6, t.getPaymentStatus().name());
+            ps.setString(7, t.getTicketStatus().name());
+            ps.setString(8, t.getQrCodeData());
 
             ps.executeUpdate();
             return t;
@@ -375,13 +373,12 @@ public class JdbcTicketRepository implements TicketRepository {
     public List<TemplateAssignmentStats> findAssignedStatsForTemplates() {
         String sql = """
                 SELECT event_id,
-                       session_id,
                        type,
                        price,
                        COUNT(*) AS assigned_count
                 FROM tickets
                 WHERE attendee_id IS NOT NULL
-                GROUP BY event_id, session_id, type, price
+                GROUP BY event_id, type, price
                 """;
 
         List<TemplateAssignmentStats> stats = new ArrayList<>();
@@ -389,12 +386,11 @@ public class JdbcTicketRepository implements TicketRepository {
              ResultSet rs = st.executeQuery(sql)) {
             while (rs.next()) {
                 UUID eventId = (UUID) rs.getObject("event_id");
-                UUID sessionId = (UUID) rs.getObject("session_id");
                 String typeStr = rs.getString("type");
                 TicketType type = typeStr != null ? TicketType.valueOf(typeStr.toUpperCase()) : TicketType.GENERAL;
                 java.math.BigDecimal price = rs.getBigDecimal("price");
                 long assignedCount = rs.getLong("assigned_count");
-                stats.add(new TemplateAssignmentStats(eventId, sessionId, type, price, assignedCount));
+                stats.add(new TemplateAssignmentStats(eventId, null, type, price, assignedCount));
             }
         } catch (SQLException e) {
             throw new RuntimeException("Failed to load assigned stats for templates", e);
@@ -412,7 +408,7 @@ public class JdbcTicketRepository implements TicketRepository {
         t.setId((UUID) rs.getObject("id"));
         t.setAttendeeId((UUID) rs.getObject("attendee_id"));
         t.setEventId((UUID) rs.getObject("event_id"));
-        t.setSessionId((UUID) rs.getObject("session_id"));
+        // Note: sessionId removed - tickets are event-level only
 
         // Handle TicketType safely
         try {

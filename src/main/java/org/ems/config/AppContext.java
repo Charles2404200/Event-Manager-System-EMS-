@@ -2,12 +2,14 @@ package org.ems.config;
 
 import org.ems.application.impl.EventServiceImpl;
 import org.ems.application.impl.IdentityServiceImpl;
+import org.ems.application.impl.ImageServiceImpl;
 import org.ems.application.impl.ReportingServiceImpl;
 import org.ems.application.impl.ScheduleServiceImpl;
 import org.ems.application.impl.TicketServiceImpl;
 
 import org.ems.application.service.EventService;
 import org.ems.application.service.IdentityService;
+import org.ems.application.service.ImageService;
 import org.ems.application.service.ReportingService;
 import org.ems.application.service.ScheduleService;
 import org.ems.application.service.TicketService;
@@ -43,8 +45,13 @@ public class AppContext {
     public final TicketService ticketService;
     public final ScheduleService scheduleService;
     public final ReportingService reportingService;
+    public final ImageService imageService;
     public Person currentUser = null;
     public String currentUserRole = "VISITOR"; // default
+
+    // Navigation context - for passing data between pages
+    public java.util.UUID selectedEventId = null;
+    public java.util.UUID selectedTicketId = null;
 
 
     // ============================================================
@@ -89,7 +96,8 @@ public class AppContext {
                 sessionRepo,
                 attendeeRepo,
                 presenterRepo,
-                scheduleService
+                scheduleService,
+                new ImageServiceImpl()
         ) : null;
 
         this.identityService = attendeeRepo != null ? new IdentityServiceImpl(
@@ -100,8 +108,12 @@ public class AppContext {
         this.ticketService = ticketRepo != null ? new TicketServiceImpl(
                 ticketRepo,
                 sessionRepo,
-                attendeeRepo
+                attendeeRepo,
+                eventRepo,
+                new ImageServiceImpl()
         ) : null;
+
+        this.imageService = new ImageServiceImpl();
 
         this.reportingService = eventRepo != null ? new ReportingServiceImpl(
                 eventRepo,

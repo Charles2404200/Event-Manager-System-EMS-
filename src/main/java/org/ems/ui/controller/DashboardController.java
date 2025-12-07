@@ -184,6 +184,7 @@ public class DashboardController {
         }
     }
 
+
     /**
      * Load presenter's assigned sessions
      */
@@ -301,8 +302,11 @@ public class DashboardController {
 
         // Load and display sessions for this event that attendee has tickets for
         try {
-            if (appContext.sessionRepo != null && appContext.ticketRepo != null && currentUser instanceof Attendee) {
+            if (appContext.sessionRepo != null && appContext.ticketRepo != null && appContext.eventRepo != null && currentUser instanceof Attendee) {
                 Attendee attendee = (Attendee) currentUser;
+
+                // Get all events
+                List<Event> allEvents = appContext.eventRepo.findAll();
 
                 // Get all sessions for this event
                 List<Session> allSessions = appContext.sessionRepo.findByEvent(event.getId());
@@ -310,49 +314,55 @@ public class DashboardController {
                 // Get all tickets for attendee
                 List<Ticket> attendeeTickets = appContext.ticketRepo.findByAttendee(attendee.getId());
 
-                // Filter sessions that attendee has tickets for
-                List<Session> registeredSessions = new java.util.ArrayList<>();
-                for (Session session : allSessions) {
-                    boolean hasTicket = attendeeTickets.stream()
-                        .anyMatch(t -> t.getSessionId() != null && t.getSessionId().equals(session.getId()));
-                    if (hasTicket) {
-                        registeredSessions.add(session);
+                // Note: Tickets are now event-level only, not session-specific
+                // Session registrations are done separately after buying ticket
+                // For now, show the events user has tickets for
+                List<Event> ticketedEvents = new java.util.ArrayList<>();
+                for (Ticket ticket : attendeeTickets) {
+                    if (ticket.getEventId() != null) {
+                        Event evt = allEvents.stream()
+                            .filter(e -> e.getId().equals(ticket.getEventId()))
+                            .findFirst()
+                            .orElse(null);
+                        if (evt != null && !ticketedEvents.contains(evt)) {
+                            ticketedEvents.add(evt);
+                        }
                     }
                 }
 
-                if (!registeredSessions.isEmpty()) {
-                    Label sessionsLabel = new Label("Registered Sessions:");
-                    sessionsLabel.setStyle("-fx-font-size: 11; -fx-font-weight: bold; -fx-text-fill: #2c3e50; -fx-padding: 10 0 5 0;");
-                    infoBox.getChildren().add(sessionsLabel);
+                if (!ticketedEvents.isEmpty()) {
+                    Label eventsLabel = new Label("Events You Have Tickets For:");
+                    eventsLabel.setStyle("-fx-font-size: 11; -fx-font-weight: bold; -fx-text-fill: #2c3e50; -fx-padding: 10 0 5 0;");
+                    infoBox.getChildren().add(eventsLabel);
 
-                    // Sort sessions by start time
-                    registeredSessions.sort((s1, s2) -> {
-                        if (s1.getStart() == null || s2.getStart() == null) return 0;
-                        return s1.getStart().compareTo(s2.getStart());
+                    // Sort events by start date
+                    ticketedEvents.sort((e1, e2) -> {
+                        if (e1.getStartDate() == null || e2.getStartDate() == null) return 0;
+                        return e1.getStartDate().compareTo(e2.getStartDate());
                     });
 
-                    // Display first 3 sessions (to avoid too much content)
+                    // Display first 3 events (to avoid too much content)
                     int count = 0;
-                    for (Session session : registeredSessions) {
+                    for (Event ticketedEvent : ticketedEvents) {
                         if (count >= 3) {
-                            Label moreLabel = new Label("  ... and " + (registeredSessions.size() - 3) + " more session(s)");
+                            Label moreLabel = new Label("  ... and " + (ticketedEvents.size() - 3) + " more event(s)");
                             moreLabel.setStyle("-fx-font-size: 10; -fx-text-fill: #999;");
                             infoBox.getChildren().add(moreLabel);
                             break;
                         }
 
-                        // Session info
-                        String sessionInfo = "  • " + (session.getTitle() != null ? session.getTitle() : "Unknown") +
-                                " (" + (session.getStart() != null ? session.getStart().toLocalTime() : "N/A") + ")";
-                        Label sessionLabel = new Label(sessionInfo);
-                        sessionLabel.setStyle("-fx-font-size: 10; -fx-text-fill: #555;");
-                        infoBox.getChildren().add(sessionLabel);
+                        // Event info
+                        String eventInfo = "  • " + (ticketedEvent.getName() != null ? ticketedEvent.getName() : "Unknown") +
+                                " (" + (ticketedEvent.getStartDate() != null ? ticketedEvent.getStartDate() : "N/A") + ")";
+                        Label ticketedEventLabel = new Label(eventInfo);
+                        ticketedEventLabel.setStyle("-fx-font-size: 10; -fx-text-fill: #555;");
+                        infoBox.getChildren().add(ticketedEventLabel);
 
-                        // Venue info
-                        if (session.getVenue() != null) {
-                            Label venueLabel = new Label("    Venue: " + session.getVenue());
-                            venueLabel.setStyle("-fx-font-size: 10; -fx-text-fill: #888;");
-                            infoBox.getChildren().add(venueLabel);
+                        // Location info
+                        if (ticketedEvent.getLocation() != null) {
+                            Label ticketedLocationLabel = new Label("    Location: " + ticketedEvent.getLocation());
+                            ticketedLocationLabel.setStyle("-fx-font-size: 10; -fx-text-fill: #888;");
+                            infoBox.getChildren().add(ticketedLocationLabel);
                         }
 
                         count++;
@@ -367,9 +377,33 @@ public class DashboardController {
             System.err.println("Error loading sessions for event: " + e.getMessage());
         }
 
-        box.getChildren().add(infoBox);
+        // Add Register Sessions button
+        VBox actionBox = new VBox(8);
+        actionBox.setPadding(new Insets(0, 10, 0, 0));
+        actionBox.setStyle("-fx-alignment: center;");
+
+        Button registerButton = new Button("📍 Register Sessions");
+        registerButton.setStyle("-fx-padding: 8 15; -fx-font-size: 11; -fx-cursor: hand; -fx-background-color: #27ae60; -fx-text-fill: white;");
+        registerButton.setOnAction(e -> navigateToRegisterSessions(event.getId()));
+
+        actionBox.getChildren().add(registerButton);
+
+        box.getChildren().addAll(infoBox, actionBox);
+        javafx.scene.layout.HBox.setHgrow(actionBox, javafx.scene.layout.Priority.ALWAYS);
 
         return box;
+    }
+
+    /**
+     * Navigate to Register Sessions page
+     */
+    private void navigateToRegisterSessions(java.util.UUID eventId) {
+        try {
+            AppContext.get().selectedEventId = eventId;
+            SceneManager.switchTo("register_sessions.fxml", "Register for Sessions");
+        } catch (Exception e) {
+            System.err.println("Error navigating to register sessions: " + e.getMessage());
+        }
     }
 
     /**

@@ -27,4 +27,23 @@ public interface EventService {
     // Linking
     boolean addPresenterToSession(UUID presenterId, UUID sessionId);
     boolean registerAttendeeToSession(UUID attendeeId, UUID sessionId);
+
+    // Image Upload
+    /**
+     * Upload an image for an event.
+     *
+     * @param filePath Path to the image file
+     * @param eventId Event UUID
+     * @return true if upload successful, false otherwise
+     */
+    boolean uploadEventImage(String filePath, UUID eventId);
+
+    /**
+     * Upload session materials (images, documents, etc.).
+     *
+     * @param filePath Path to the material file
+     * @param sessionId Session UUID
+     * @return true if upload successful, false otherwise
+     */
+    boolean uploadSessionMaterial(String filePath, UUID sessionId);
 }
