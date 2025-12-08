@@ -399,7 +399,7 @@ public class JdbcTicketRepository implements TicketRepository {
     }
 
     // ---------------------------------------------------------
-    // MAPPER
+    // MAPPER - FULL ROW
     // ---------------------------------------------------------
     private Ticket mapRow(ResultSet rs) throws SQLException {
 
@@ -458,6 +458,28 @@ public class JdbcTicketRepository implements TicketRepository {
     }
 
     // ---------------------------------------------------------
+    // MAPPER - LITE (for templates pagination - minimal fields)
+    // ---------------------------------------------------------
+    /**
+     * Optimized mapper for template pagination.
+     * Only populates essential fields: id, eventId, type, price, createdAt.
+     * Skips null-checking and enum validation to reduce CPU cost.
+     */
+    private Ticket mapRowLite(ResultSet rs) throws SQLException {
+        Ticket t = new Ticket();
+        t.setId((UUID) rs.getObject("id"));
+        t.setEventId((UUID) rs.getObject("event_id"));
+
+        String typeStr = rs.getString("type");
+        t.setType(typeStr != null ? TicketType.valueOf(typeStr) : TicketType.GENERAL);
+
+        t.setPrice(rs.getBigDecimal("price"));
+        t.setCreatedAt(rs.getTimestamp("created_at"));
+
+        return t;
+    }
+
+    // ---------------------------------------------------------
     // KEYSET PAGINATION - TEMPLATES
     // ---------------------------------------------------------
     @Override
@@ -466,17 +488,19 @@ public class JdbcTicketRepository implements TicketRepository {
 
         String sql;
         if (lastCreatedAt == null) {
-            // First page: no cursor
+            // First page: no cursor - select only needed columns for display + aggregation
             sql = """
-                SELECT * FROM tickets
+                SELECT id, event_id, type, price, created_at
+                FROM tickets
                 WHERE attendee_id IS NULL
                 ORDER BY created_at DESC NULLS LAST, id DESC
                 LIMIT ?
                 """;
         } else {
-            // Subsequent pages: use keyset cursor
+            // Subsequent pages: use keyset cursor - optimized column selection
             sql = """
-                SELECT * FROM tickets
+                SELECT id, event_id, type, price, created_at
+                FROM tickets
                 WHERE attendee_id IS NULL
                   AND (created_at, id) < (?, ?)
                 ORDER BY created_at DESC NULLS LAST, id DESC
@@ -496,7 +520,7 @@ public class JdbcTicketRepository implements TicketRepository {
 
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    list.add(mapRow(rs));
+                    list.add(mapRowLite(rs));
                 }
             }
         } catch (SQLException e) {
@@ -515,9 +539,10 @@ public class JdbcTicketRepository implements TicketRepository {
 
         String sql;
         if (lastCreatedAt == null) {
-            // First page: no cursor
+            // First page: no cursor - select all columns for assigned tickets display
             sql = """
-                SELECT * FROM tickets
+                SELECT id, attendee_id, event_id, type, price, payment_status, status, qr_code_data, created_at
+                FROM tickets
                 WHERE attendee_id IS NOT NULL
                 ORDER BY created_at DESC NULLS LAST, id DESC
                 LIMIT ?
@@ -525,13 +550,16 @@ public class JdbcTicketRepository implements TicketRepository {
         } else {
             // Subsequent pages: use keyset cursor
             sql = """
-                SELECT * FROM tickets
+                SELECT id, attendee_id, event_id, type, price, payment_status, status, qr_code_data, created_at
+                FROM tickets
                 WHERE attendee_id IS NOT NULL
                   AND (created_at, id) < (?, ?)
                 ORDER BY created_at DESC NULLS LAST, id DESC
                 LIMIT ?
                 """;
         }
+
+        long startTime = System.currentTimeMillis();
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             int paramIndex = 1;
@@ -551,6 +579,9 @@ public class JdbcTicketRepository implements TicketRepository {
         } catch (SQLException e) {
             throw new RuntimeException("Failed to find assigned by cursor", e);
         }
+
+        long endTime = System.currentTimeMillis();
+        System.out.println("[Perf] findAssignedByCursor executed in " + (endTime - startTime) + " ms, rows=" + list.size());
 
         return list;
     }

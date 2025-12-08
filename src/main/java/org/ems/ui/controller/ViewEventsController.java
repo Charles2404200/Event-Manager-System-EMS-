@@ -61,6 +61,7 @@ public class ViewEventsController {
     private final Map<UUID, Presenter> presenterCache = new HashMap<>();
     private final Map<UUID, List<Session>> sessionCache = new HashMap<>();
     private final Map<UUID, Image> imageCache = new HashMap<>();
+    private final Map<UUID, Event> eventCache = new HashMap<>();  // NEW: Cache events
     private final Set<UUID> userRegisteredEvents = new HashSet<>();
     private List<EventRow> currentPageCache = new ArrayList<>();
 
@@ -104,49 +105,49 @@ public class ViewEventsController {
         var columns = eventsTable.getColumns();
         if (columns.size() < 9) return;
 
-        // Image column with thumbnail preview
+        // Image column with thumbnail preview - USE EventRow.imagePath directly!
         TableColumn<EventRow, String> imageCol = (TableColumn<EventRow, String>) columns.get(0);
-        imageCol.setCellValueFactory(cd -> new SimpleStringProperty(cd.getValue().eventId.toString()));
+        imageCol.setCellValueFactory(cd -> new SimpleStringProperty(cd.getValue().imagePath));
         imageCol.setCellFactory(col -> new TableCell<EventRow, String>() {
             @Override
-            protected void updateItem(String eventId, boolean empty) {
-                super.updateItem(eventId, empty);
-                if (empty || eventId == null) {
+            protected void updateItem(String imagePath, boolean empty) {
+                super.updateItem(imagePath, empty);
+                if (empty || imagePath == null || imagePath.isEmpty()) {
+                    setText("📷");
                     setGraphic(null);
+                    setStyle("-fx-alignment: center; -fx-text-fill: #999;");
                     return;
                 }
 
                 try {
                     EventRow row = getTableView().getItems().get(getIndex());
-                    UUID eventUUID = UUID.fromString(eventId);
-                    Event event = eventRepo.findById(eventUUID);
 
-                    if (event != null && event.getImagePath() != null && !event.getImagePath().isEmpty()) {
-                        Image cachedImage = imageCache.get(eventUUID);
-                        if (cachedImage == null) {
-                            cachedImage = loadImage(event.getImagePath());
-                            if (cachedImage != null) {
-                                imageCache.put(eventUUID, cachedImage);
-                            }
-                        }
-
+                    // Check cache first
+                    Image cachedImage = imageCache.get(row.eventId);
+                    if (cachedImage == null) {
+                        // Load asynchronously in background
+                        cachedImage = loadImage(imagePath);
                         if (cachedImage != null) {
-                            ImageView imageView = new ImageView(cachedImage);
-                            imageView.setFitWidth(80);
-                            imageView.setFitHeight(60);
-                            imageView.setPreserveRatio(true);
-                            imageView.setStyle("-fx-border-color: #ddd; -fx-border-width: 1; -fx-border-radius: 3;");
-                            setGraphic(imageView);
-                        } else {
-                            setText("❌");
-                            setStyle("-fx-alignment: center;");
+                            imageCache.put(row.eventId, cachedImage);
                         }
+                    }
+
+                    if (cachedImage != null) {
+                        ImageView imageView = new ImageView(cachedImage);
+                        imageView.setFitWidth(80);
+                        imageView.setFitHeight(60);
+                        imageView.setPreserveRatio(true);
+                        imageView.setStyle("-fx-border-color: #ddd; -fx-border-width: 1; -fx-border-radius: 3;");
+                        setGraphic(imageView);
+                        setText(null);
                     } else {
-                        setText("📷");
-                        setStyle("-fx-alignment: center; -fx-text-fill: #999;");
+                        setText("❌");
+                        setGraphic(null);
+                        setStyle("-fx-alignment: center;");
                     }
                 } catch (Exception e) {
                     setText("❌");
+                    setGraphic(null);
                     setStyle("-fx-alignment: center;");
                 }
             }
@@ -222,7 +223,8 @@ public class ViewEventsController {
                                     event.getEndDate() != null ? event.getEndDate().toString() : "N/A",
                                     event.getStatus().name(),
                                     0,
-                                    userRegisteredEvents.contains(event.getId())
+                                    userRegisteredEvents.contains(event.getId()),
+                                    event.getImagePath()  // NEW: Add image path from event
                             ));
                         }
 
@@ -583,8 +585,8 @@ public class ViewEventsController {
     }
 
     /**
-     * Load and cache image from file path
-     * @param imagePath Path to image file
+     * Load and cache image from file path or R2 URL
+     * @param imagePath Path to image file or R2 URL
      * @return Image object or null if failed
      */
     private Image loadImage(String imagePath) {
@@ -593,28 +595,82 @@ public class ViewEventsController {
         }
 
         try {
-            File imageFile = new File(imagePath);
-            if (imageFile.exists()) {
-                return new Image(new FileInputStream(imageFile));
+            // Check if it's R2 URL (Cloudflare - both endpoints)
+            if (imagePath.startsWith("http://") || imagePath.startsWith("https://")) {
+                System.out.println("Loading image from R2: " + imagePath);
+                // Use async loading for remote URLs
+                return new Image(imagePath, true);  // true = async loading
+            }
+            // Otherwise treat as local file
+            else {
+                File imageFile = new File(imagePath);
+                if (imageFile.exists()) {
+                    return new Image(new FileInputStream(imageFile));
+                }
             }
         } catch (Exception e) {
-            System.err.println("Failed to load image: " + e.getMessage());
+            System.err.println("Failed to load image: " + imagePath + " -> " + e.getMessage());
         }
         return null;
     }
 
     /**
-     * Show event details dialog with image
+     * Show event details dialog with image (async loading for speed)
      * @param selected Selected EventRow
      */
     private void showEventDetailsWithImage(EventRow selected) {
         try {
-            Event event = eventRepo.findById(selected.eventId);
-            if (event == null) {
-                showAlert("Error", "Event not found");
-                return;
-            }
+            // Show loading dialog immediately
+            Dialog<Void> loadingDialog = new Dialog<>();
+            loadingDialog.setTitle("Event Details");
+            loadingDialog.setHeaderText("Loading...");
+            VBox loadingContent = new VBox(10);
+            loadingContent.setStyle("-fx-alignment: center; -fx-padding: 50;");
+            loadingContent.getChildren().add(new Label("Loading event details..."));
+            loadingDialog.getDialogPane().setContent(loadingContent);
+            loadingDialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
 
+            // Load event details asynchronously
+            AsyncTaskService.runAsync(
+                    () -> {
+                        // Check cache first
+                        Event event = eventCache.get(selected.eventId);
+                        if (event == null) {
+                            event = eventRepo.findById(selected.eventId);
+                            if (event != null) {
+                                eventCache.put(selected.eventId, event);
+                            }
+                        }
+                        return event;
+                    },
+                    event -> {
+                        loadingDialog.close();
+                        if (event != null) {
+                            showEventDetailsDialog(event, selected);
+                        } else {
+                            showAlert("Error", "Event not found");
+                        }
+                    },
+                    error -> {
+                        loadingDialog.close();
+                        showAlert("Error", "Failed to load event: " + error.getMessage());
+                    }
+            );
+
+            loadingDialog.showAndWait();
+
+        } catch (Exception e) {
+            showAlert("Error", "Failed to load event details: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Show event details dialog (called after async load)
+     * @param event The event object (already loaded)
+     * @param selected The EventRow for display info
+     */
+    private void showEventDetailsDialog(Event event, EventRow selected) {
+        try {
             Dialog<Void> dialog = new Dialog<>();
             dialog.setTitle("Event Details");
             dialog.setHeaderText(selected.name);
@@ -623,23 +679,42 @@ public class ViewEventsController {
             content.setPadding(new Insets(20));
             content.setStyle("-fx-font-size: 12;");
 
-            // Event image section
+            // Event image section (load async in background)
             VBox imageSection = new VBox(10);
             imageSection.setStyle("-fx-border-color: #cccccc; -fx-border-width: 1; -fx-padding: 10; -fx-border-radius: 5;");
 
             if (event.getImagePath() != null && !event.getImagePath().isEmpty()) {
-                Image eventImage = loadImage(event.getImagePath());
-                if (eventImage != null) {
-                    ImageView imageView = new ImageView(eventImage);
-                    imageView.setFitWidth(400);
-                    imageView.setFitHeight(250);
-                    imageView.setPreserveRatio(true);
-                    imageView.setStyle("-fx-border-color: #999999; -fx-border-width: 1;");
-                    imageSection.getChildren().add(imageView);
+                // Check cache first
+                Image cachedImage = imageCache.get(event.getId());
+                if (cachedImage != null) {
+                    addImageToSection(imageSection, cachedImage);
                 } else {
-                    Label noImageLabel = new Label("❌ Image not available");
-                    noImageLabel.setStyle("-fx-font-size: 12; -fx-text-fill: #999;");
-                    imageSection.getChildren().add(noImageLabel);
+                    // Load image asynchronously in background
+                    Label loadingLabel = new Label("📷 Loading image...");
+                    loadingLabel.setStyle("-fx-font-size: 12; -fx-text-fill: #999;");
+                    imageSection.getChildren().add(loadingLabel);
+
+                    AsyncTaskService.runAsync(
+                            () -> loadImage(event.getImagePath()),
+                            loadedImage -> {
+                                if (loadedImage != null) {
+                                    imageCache.put(event.getId(), loadedImage);
+                                    imageSection.getChildren().clear();
+                                    addImageToSection(imageSection, loadedImage);
+                                } else {
+                                    imageSection.getChildren().clear();
+                                    Label noImageLabel = new Label("❌ Image not available");
+                                    noImageLabel.setStyle("-fx-font-size: 12; -fx-text-fill: #999;");
+                                    imageSection.getChildren().add(noImageLabel);
+                                }
+                            },
+                            error -> {
+                                imageSection.getChildren().clear();
+                                Label errorLabel = new Label("❌ Failed to load image");
+                                errorLabel.setStyle("-fx-font-size: 12; -fx-text-fill: #e74c3c;");
+                                imageSection.getChildren().add(errorLabel);
+                            }
+                    );
                 }
             } else {
                 Label noImageLabel = new Label("📷 No image for this event");
@@ -702,9 +777,21 @@ public class ViewEventsController {
             dialog.showAndWait();
 
         } catch (Exception e) {
-            showAlert("Error", "Failed to load event details: " + e.getMessage());
-            e.printStackTrace();
+            showAlert("Error", "Failed to show event details: " + e.getMessage());
         }
+    }
+
+    /**
+     * Helper method to add image to section
+     */
+    private void addImageToSection(VBox section, Image image) {
+        section.getChildren().clear();
+        ImageView imageView = new ImageView(image);
+        imageView.setFitWidth(400);
+        imageView.setFitHeight(250);
+        imageView.setPreserveRatio(true);
+        imageView.setStyle("-fx-border-color: #999999; -fx-border-width: 1;");
+        section.getChildren().add(imageView);
     }
 
     private void showAlert(String title, String message) {
@@ -728,9 +815,15 @@ public class ViewEventsController {
         public String status;
         public int sessionCount;
         public boolean isRegistered;
+        public String imagePath;  // NEW: Image URL from R2
 
         public EventRow(UUID eventId, String name, String type, String location,
                        String startDate, String endDate, String status, int sessionCount, boolean isRegistered) {
+            this(eventId, name, type, location, startDate, endDate, status, sessionCount, isRegistered, null);
+        }
+
+        public EventRow(UUID eventId, String name, String type, String location,
+                       String startDate, String endDate, String status, int sessionCount, boolean isRegistered, String imagePath) {
             this.eventId = eventId;
             this.name = name;
             this.type = type;
@@ -740,6 +833,7 @@ public class ViewEventsController {
             this.status = status;
             this.sessionCount = sessionCount;
             this.isRegistered = isRegistered;
+            this.imagePath = imagePath;
         }
     }
 }

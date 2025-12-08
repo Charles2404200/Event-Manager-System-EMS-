@@ -1,4 +1,5 @@
 package org.ems.ui.controller;
+
 /**
  * @author <your group number>
  */
@@ -8,7 +9,9 @@ import javafx.fxml.FXML;
 import javafx.geometry.Insets;
 import javafx.scene.control.*;
 import javafx.scene.layout.GridPane;
+import javafx.stage.FileChooser;
 import org.ems.application.service.EventService;
+import org.ems.application.service.ImageUploadService;
 import org.ems.domain.model.enums.EventType;
 import org.ems.domain.model.Event;
 import org.ems.config.AppContext;
@@ -16,8 +19,8 @@ import org.ems.ui.stage.SceneManager;
 import org.ems.ui.util.AsyncTaskService;
 import org.ems.ui.util.LoadingDialog;
 
+import java.io.File;
 import java.time.LocalDate;
-import java.util.List;
 import java.util.UUID;
 
 public class EventManagerController {
@@ -29,7 +32,24 @@ public class EventManagerController {
     @FXML private TableColumn<Event, String> colLocation;
 
     private final EventService eventService = AppContext.get().eventService;
+    private ImageUploadService imageUploadService = null;
     private LoadingDialog loadingDialog;
+    private File selectedImageFile = null;
+
+    /**
+     * Get or create ImageUploadService (lazy initialization)
+     */
+    private ImageUploadService getImageUploadService() {
+        if (imageUploadService == null) {
+            try {
+                imageUploadService = new ImageUploadService();
+            } catch (Exception e) {
+                System.err.println("Warning: Could not initialize ImageUploadService: " + e.getMessage());
+                return null;
+            }
+        }
+        return imageUploadService;
+    }
 
     @FXML
     public void initialize() {
@@ -58,7 +78,6 @@ public class EventManagerController {
      * Load events asynchronously without blocking UI
      */
     private void loadEventsAsync() {
-        // Get stage safely
         javafx.stage.Stage primaryStage = null;
         try {
             if (eventTable != null && eventTable.getScene() != null) {
@@ -76,7 +95,7 @@ public class EventManagerController {
         // Run on background thread
         AsyncTaskService.runAsync(
                 // Background task: Load events from database
-                () -> eventService.getEvents(),
+                eventService::getEvents,
 
                 // Success callback: Update UI on JavaFX thread
                 events -> {
@@ -104,7 +123,17 @@ public class EventManagerController {
 
     @FXML
     public void backToDashboard() {
+        cleanup();
         SceneManager.switchTo("dashboard.fxml", "EMS - Dashboard");
+    }
+
+    /**
+     * Cleanup resources
+     */
+    private void cleanup() {
+        if (imageUploadService != null) {
+            imageUploadService.close();
+        }
     }
 
     @FXML
@@ -128,6 +157,48 @@ public class EventManagerController {
         Label endLabel = new Label("End (YYYY-MM-DD):");
         TextField endField = new TextField();
 
+        // Image upload section
+        Label imageLabel = new Label("Event Image:");
+        Button imageButton = new Button("Choose Image");
+        Label imageStatusLabel = new Label("No image selected");
+        imageStatusLabel.setStyle("-fx-text-fill: #999;");
+
+        imageButton.setOnAction(evt -> {
+            FileChooser fileChooser = new FileChooser();
+            fileChooser.setTitle("Select Event Image");
+            fileChooser.getExtensionFilters().addAll(
+                    new FileChooser.ExtensionFilter("Image Files", "*.jpg", "*.jpeg", "*.png", "*.gif", "*.webp"),
+                    new FileChooser.ExtensionFilter("All Files", "*.*")
+            );
+
+            try {
+                javafx.stage.Stage stage = (javafx.stage.Stage) dialog.getDialogPane().getScene().getWindow();
+                File file = fileChooser.showOpenDialog(stage);
+
+                if (file != null) {
+                    ImageUploadService uploadService = getImageUploadService();
+                    if (uploadService == null) {
+                        imageStatusLabel.setText("Image service not available");
+                        imageStatusLabel.setStyle("-fx-text-fill: #e74c3c;");
+                    } else if (!uploadService.isValidImageFile(file)) {
+                        imageStatusLabel.setText("Invalid image format");
+                        imageStatusLabel.setStyle("-fx-text-fill: #e74c3c;");
+                        selectedImageFile = null;
+                    } else if (!uploadService.isValidFileSize(file)) {
+                        imageStatusLabel.setText("File too large (max 10MB)");
+                        imageStatusLabel.setStyle("-fx-text-fill: #e74c3c;");
+                        selectedImageFile = null;
+                    } else {
+                        selectedImageFile = file;
+                        imageStatusLabel.setText("✓ " + file.getName());
+                        imageStatusLabel.setStyle("-fx-text-fill: #27ae60;");
+                    }
+                }
+            } catch (Exception e) {
+                System.err.println("Error selecting file: " + e.getMessage());
+            }
+        });
+
         GridPane grid = new GridPane();
         grid.setHgap(8);
         grid.setVgap(8);
@@ -138,6 +209,8 @@ public class EventManagerController {
         grid.addRow(2, locLabel, locField);
         grid.addRow(3, startLabel, startField);
         grid.addRow(4, endLabel, endField);
+        grid.addRow(5, imageLabel, imageButton);
+        grid.add(imageStatusLabel, 1, 6);
 
         dialog.getDialogPane().setContent(grid);
         dialog.getDialogPane().getButtonTypes().addAll(
@@ -154,6 +227,10 @@ public class EventManagerController {
                     e.setLocation(locField.getText());
                     e.setStartDate(LocalDate.parse(startField.getText()));
                     e.setEndDate(LocalDate.parse(endField.getText()));
+
+                    // DO NOT set local path - it will be set after upload to R2
+                    // Image path will be set to R2 URL after successful upload
+
                     return e;
                 } catch (Exception ex) {
                     System.err.println("Error adding event: " + ex.getMessage());
@@ -181,8 +258,30 @@ public class EventManagerController {
             }
 
             final LoadingDialog finalDialog = addDialog;
+            final File imageToUpload = selectedImageFile;
+
             AsyncTaskService.runAsync(
                     () -> {
+                        // Upload image if selected
+                        if (imageToUpload != null && imageToUpload.exists()) {
+                            try {
+                                ImageUploadService uploadService = getImageUploadService();
+                                if (uploadService != null) {
+                                    System.out.println("Uploading image to Cloudflare R2...");
+                                    String imageUrl = uploadService.uploadEventImage(
+                                            imageToUpload,
+                                            ev.getId().toString()
+                                    );
+                                    ev.setImagePath(imageUrl);
+                                    System.out.println("✓ Image uploaded: " + imageUrl);
+                                }
+                            } catch (Exception ex) {
+                                System.err.println("⚠ Warning: Failed to upload image: " + ex.getMessage());
+                                // Continue anyway without image
+                            }
+                        }
+
+                        // Save event
                         eventService.createEvent(ev);
                         return null;
                     },
@@ -190,6 +289,7 @@ public class EventManagerController {
                         if (finalDialog != null) {
                             finalDialog.close();
                         }
+                        selectedImageFile = null;  // Reset
                         loadEventsAsync();  // Refresh list
                         System.out.println("✓ Event added successfully");
                     },

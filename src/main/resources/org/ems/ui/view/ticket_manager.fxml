@@ -104,6 +104,20 @@
                             <Button text="⟲ Refresh" onAction="#onAssignedRefresh" style="-fx-padding: 8 15; -fx-cursor: hand;"/>
                             <Label fx:id="assignedPageLabel" text="(Keyset Pagination)" style="-fx-font-size: 11; -fx-text-fill: #666;"/>
                         </HBox>
+
+                        <!-- Pagination Controls -->
+                        <HBox spacing="10" alignment="CENTER" style="-fx-padding: 10 10 0 10;">
+                            <Button fx:id="assignedPrevButton" text="← Previous" style="-fx-padding: 8 15; -fx-cursor: hand; -fx-font-size: 11;" onAction="#onAssignedPrevPage"/>
+
+                            <!-- Page buttons container -->
+                            <HBox fx:id="assignedPaginationBox" spacing="5" alignment="CENTER">
+                                <!-- Page buttons will be dynamically added here -->
+                            </HBox>
+
+                            <Button fx:id="assignedNextButton" text="Next →" style="-fx-padding: 8 15; -fx-cursor: hand; -fx-font-size: 11;" onAction="#onAssignedNextPage"/>
+
+                            <Label fx:id="assignedPageInfoLabel" text="Page 1 of 1" style="-fx-font-size: 11; -fx-text-fill: #666; -fx-padding: 0 10 0 10;"/>
+                        </HBox>
                     </VBox>
 
                     <!-- Statistics -->

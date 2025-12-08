@@ -44,9 +44,9 @@ public class DatabaseConfig {
             throw new RuntimeException("Failed to load database configuration", e);
         }
 
-        // NEON Database Configuration
+        // Supabase Database Configuration
         // Convert postgresql:// URL to jdbc:postgresql:// for JDBC
-        String rawUrl = props.getProperty("db.url", "postgresql://neondb_owner:npg_R2ZHtbvASw7T@ep-mute-pond-a11bdd5p-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require");
+        String rawUrl = props.getProperty("db.url", "postgresql://postgres:Pricepc24_04@db.ntygvfgxymvdyxezdpvv.supabase.co:5432/postgres");
 
         // Convert format: postgresql://user:pass@host/db → jdbc:postgresql://host/db
         if (rawUrl.startsWith("postgresql://")) {
@@ -65,21 +65,20 @@ public class DatabaseConfig {
         } else {
             // Already JDBC format
             URL = rawUrl;
-            USER = props.getProperty("db.username", "neondb_owner");
-            PASSWORD = props.getProperty("db.password", "npg_R2ZHtbvASw7T");
+            USER = props.getProperty("db.username", "postgres");
+            PASSWORD = props.getProperty("db.password", "Pricepc24_04");
         }
 
-        System.out.println("✓ Database Config Loaded (NEON):");
+        System.out.println("✓ Database Config Loaded (SUPABASE):");
         System.out.println("   JDBC URL: " + URL);
         System.out.println("   User: " + USER);
-        System.out.println("   Region: ap-southeast-1 (AWS Singapore)");
 
         // Initialize HikariCP connection pool
         initializeHikariPool();
     }
 
     /**
-     * Initialize HikariCP connection pool with optimized settings for NEON
+     * Initialize HikariCP connection pool with optimized settings for Supabase
      */
     private static void initializeHikariPool() {
         try {
@@ -89,26 +88,24 @@ public class DatabaseConfig {
             config.setPassword(PASSWORD);
             config.setDriverClassName("org.postgresql.Driver");
 
-            // Connection pool settings for optimal performance with NEON
+            // Connection pool settings for optimal performance with Supabase
             config.setMaximumPoolSize(10);           // Maximum connections in pool
             config.setMinimumIdle(2);                // Minimum idle connections
             config.setConnectionTimeout(30000);      // 30 seconds timeout
             config.setIdleTimeout(600000);           // 10 minutes idle timeout
             config.setMaxLifetime(1800000);          // 30 minutes max lifetime
             config.setAutoCommit(true);              // Auto-commit enabled
-            config.setPoolName("EventManagerNeonPool");  // Pool name for monitoring
+            config.setPoolName("EventManagerSupabasePool");  // Pool name for monitoring
 
-            // NEON-specific properties
+            // Supabase-specific properties
             config.addDataSourceProperty("sslmode", "require");           // Force SSL/TLS
-            config.addDataSourceProperty("channel_binding", "require");   // Channel binding for security
             config.addDataSourceProperty("ssl", "true");                  // Enable SSL
 
             dataSource = new HikariDataSource(config);
-            System.out.println("✓ HikariCP Connection Pool initialized for NEON:");
+            System.out.println("✓ HikariCP Connection Pool initialized for SUPABASE:");
             System.out.println("   Max Pool Size: " + config.getMaximumPoolSize());
             System.out.println("   Min Idle: " + config.getMinimumIdle());
             System.out.println("   SSL Mode: require");
-            System.out.println("   Channel Binding: require");
         } catch (Exception e) {
             System.err.println("✗ Failed to initialize HikariCP: " + e.getMessage());
             e.printStackTrace();
@@ -118,7 +115,7 @@ public class DatabaseConfig {
 
     /**
      * Get connection from HikariCP pool
-     * @return Connection from NEON database
+     * @return Connection from Supabase database
      * @throws SQLException if connection fails
      */
     public static Connection getConnection() throws SQLException {
@@ -127,11 +124,11 @@ public class DatabaseConfig {
                 throw new SQLException("HikariDataSource not initialized");
             }
             Connection conn = dataSource.getConnection();
-            System.out.println("✓ Got connection from NEON pool");
+            System.out.println("✓ Got connection from Supabase pool");
             return conn;
         } catch (SQLException e) {
-            System.err.println("✗ Failed to get connection from NEON pool: " + e.getMessage());
-            System.err.println("   Please verify NEON database connection string in application.properties");
+            System.err.println("✗ Failed to get connection from Supabase pool: " + e.getMessage());
+            System.err.println("   Please verify Supabase database connection string in application.properties");
             System.err.println("   Connection URL: " + URL);
             throw e;
         }
@@ -153,7 +150,7 @@ public class DatabaseConfig {
      */
     public static String getPoolStats() {
         if (dataSource != null) {
-            return String.format("✓ NEON Pool Stats - Active: %d, Idle: %d, Waiting: %d",
+            return String.format("✓ Supabase Pool Stats - Active: %d, Idle: %d, Waiting: %d",
                     dataSource.getHikariPoolMXBean().getActiveConnections(),
                     dataSource.getHikariPoolMXBean().getIdleConnections(),
                     dataSource.getHikariPoolMXBean().getThreadsAwaitingConnection());

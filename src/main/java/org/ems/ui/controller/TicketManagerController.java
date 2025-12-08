@@ -7,8 +7,11 @@ package org.ems.ui.controller;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.fxml.FXML;
+import javafx.scene.control.Button;
+import javafx.scene.control.Label;
 import javafx.scene.control.*;
 import javafx.scene.layout.VBox;
+import javafx.scene.layout.HBox;
 import javafx.geometry.Insets;
 import javafx.concurrent.Task;
 import javafx.application.Platform;
@@ -44,6 +47,10 @@ public class TicketManagerController {
     @FXML private Label activeAssignedLabel;
     @FXML private Label totalRevenueLabel;
     @FXML private Label assignedPageLabel;
+    @FXML private Button assignedPrevButton;
+    @FXML private Button assignedNextButton;
+    @FXML private HBox assignedPaginationBox;
+    @FXML private Label assignedPageInfoLabel;
 
     private TicketRepository ticketRepo;
     private List<TemplateRow> allTemplates;
@@ -55,6 +62,11 @@ public class TicketManagerController {
     private UUID lastTemplateId = null;
     private Timestamp lastAssignedCreatedAt = null;
     private UUID lastAssignedId = null;
+
+    // Page number tracking for UI
+    private int currentAssignedPage = 1;
+    private long totalAssignedCount = 0;
+    private int totalAssignedPages = 1;
 
     private Map<String, UUID> eventMap = new HashMap<>();
     private Map<String, UUID> sessionMap = new HashMap<>();
@@ -72,7 +84,7 @@ public class TicketManagerController {
 
     @FXML
     public void initialize() {
-        // ✅ STEP 1: UI SETUP ONLY (< 50ms)
+        //  STEP 1: UI SETUP ONLY (< 50ms)
         ticketRepo = AppContext.get().ticketRepo;
 
         // Setup table columns
@@ -91,9 +103,9 @@ public class TicketManagerController {
         templatesCountLabel.setText("Loading...");
         assignedCountLabel.setText("Ready");
 
-        System.out.println("✅ UI initialized in < 50ms");
+        System.out.println(" UI initialized in < 50ms");
 
-        // ✅ STEP 2: DEFER ALL DB OPERATIONS TO AFTER UI RENDER
+        //  STEP 2: DEFER ALL DB OPERATIONS TO AFTER UI RENDER
         Platform.runLater(this::loadDataAsync);
     }
 
@@ -123,10 +135,7 @@ public class TicketManagerController {
                 long start = System.currentTimeMillis();
                 try {
                     AppContext context = AppContext.get();
-                    eventCacheById.clear();
-                    sessionCacheById.clear();
-                    attendeeCacheById.clear();
-
+                    // Only cache events and sessions - attendees will be loaded on-demand by loadAttendeesAsync
                     if (context.eventRepo != null) {
                         for (Event e : context.eventRepo.findAll()) {
                             eventCacheById.put(e.getId(), e);
@@ -137,15 +146,10 @@ public class TicketManagerController {
                             sessionCacheById.put(s.getId(), s);
                         }
                     }
-                    if (context.attendeeRepo != null) {
-                        for (Attendee a : context.attendeeRepo.findAll()) {
-                            attendeeCacheById.put(a.getId(), a);
-                        }
-                    }
 
                     System.out.println("[" + runId + "] initCachesAsync built caches in " +
                             (System.currentTimeMillis() - start) + " ms (events=" + eventCacheById.size() +
-                            ", sessions=" + sessionCacheById.size() + ", attendees=" + attendeeCacheById.size() + ")");
+                            ", sessions=" + sessionCacheById.size() + ")");
 
                 } catch (Exception ex) {
                     System.err.println("[" + runId + "] initCachesAsync failed: " + ex.getMessage());
@@ -379,8 +383,33 @@ public class TicketManagerController {
             }
 
             Map<TemplateKey, Long> assignedCountMap = getTemplateAssignedCountCache(runId);
-
             AppContext context = AppContext.get();
+
+            // Batch collect missing events instead of looking up individually
+            Set<UUID> missingEventIds = new HashSet<>();
+            for (Ticket ticket : templateTickets) {
+                UUID eventId = ticket.getEventId();
+                if (eventId != null && !eventCacheById.containsKey(eventId)) {
+                    missingEventIds.add(eventId);
+                }
+            }
+
+            // Batch load missing events
+            if (!missingEventIds.isEmpty() && context.eventRepo != null) {
+                long batchLoadStart = System.currentTimeMillis();
+                for (UUID eventId : missingEventIds) {
+                    try {
+                        Event evt = context.eventRepo.findById(eventId);
+                        if (evt != null) {
+                            eventCacheById.put(eventId, evt);
+                        }
+                    } catch (Exception ignored) {}
+                }
+                System.out.println("[" + (runId != null ? runId : "TicketTemplates") + "] batch loaded " +
+                        missingEventIds.size() + " events in " +
+                        (System.currentTimeMillis() - batchLoadStart) + " ms");
+            }
+
             if (!templateTickets.isEmpty()) {
                 for (Ticket ticket : templateTickets) {
                     UUID eventId = ticket.getEventId();
@@ -388,16 +417,8 @@ public class TicketManagerController {
                     String eventName = "Unknown";
                     String sessionName = "N/A";
 
+                    // Now all events should be cached
                     Event evt = eventId != null ? eventCacheById.get(eventId) : null;
-                    if (evt == null && context.eventRepo != null && eventId != null) {
-                        try {
-                            evt = context.eventRepo.findById(eventId);
-                            if (evt != null) {
-                                eventCacheById.put(eventId, evt);
-                            }
-                        } catch (Exception ignored) {
-                        }
-                    }
                     if (evt != null && evt.getName() != null) {
                         eventName = evt.getName();
                     }
@@ -513,67 +534,106 @@ public class TicketManagerController {
         }
     }
 
-    private void loadAttendees() {
-        try {
-            AppContext context = AppContext.get();
-            List<String> attendeeList = new ArrayList<>();
-            attendeeMap.clear();
+    /**
+     * Load attendees asynchronously in background - non-blocking
+     * This is the ONLY method that should load attendees
+     */
+    private void loadAttendeesAsync() {
+        Task<List<String>> task = new Task<>() {
+            @Override
+            protected List<String> call() {
+                long start = System.currentTimeMillis();
+                List<String> attendeeList = new ArrayList<>();
+                attendeeMap.clear();
 
-            if (context.attendeeRepo != null) {
-                List<Attendee> attendees = context.attendeeRepo.findAll();
-                for (Attendee att : attendees) {
-                    String display = att.getFullName() + " (" + att.getId().toString().substring(0, 8) + ")";
-                    attendeeList.add(display);
-                    attendeeMap.put(display, att.getId());
+                try {
+                    AppContext context = AppContext.get();
+                    if (context.attendeeRepo != null) {
+                        List<Attendee> attendees = context.attendeeRepo.findAll();
+                        for (Attendee att : attendees) {
+                            String display = att.getFullName() + " (" + att.getId().toString().substring(0, 8) + ")";
+                            attendeeList.add(display);
+                            attendeeMap.put(display, att.getId());
+                        }
+                    }
+                    System.out.println("[Perf] loadAttendeesAsync completed in " +
+                            (System.currentTimeMillis() - start) + " ms, loaded " + attendeeList.size() + " attendees");
+                } catch (Exception e) {
+                    System.err.println("Error loading attendees async: " + e.getMessage());
                 }
+                return attendeeList;
             }
+        };
 
-            assignAttendeeCombo.setItems(FXCollections.observableArrayList(attendeeList));
-            if (!attendeeList.isEmpty()) {
-                assignAttendeeCombo.setValue(attendeeList.get(0));
-            }
+        task.setOnSucceeded(event -> {
+            List<String> attendeeList = task.getValue();
+            Platform.runLater(() -> {
+                assignAttendeeCombo.setItems(FXCollections.observableArrayList(attendeeList));
+                if (!attendeeList.isEmpty()) {
+                    assignAttendeeCombo.setValue(attendeeList.get(0));
+                }
+            });
+        });
 
-        } catch (Exception e) {
-            System.err.println("Error loading attendees: " + e.getMessage());
-        }
+        Thread t = new Thread(task, "async-attendees-loader");
+        t.setDaemon(true);
+        t.start();
     }
 
-    private void loadTemplatesForAssign() {
-        try {
-            List<String> templateList = new ArrayList<>();
-            templateMap.clear();
+    /**
+     * Load templates for assign asynchronously in background - non-blocking
+     * This is the ONLY method that should load templates for assign
+     */
+    private void loadTemplatesForAssignAsync() {
+        Task<List<String>> task = new Task<>() {
+            @Override
+            protected List<String> call() {
+                long start = System.currentTimeMillis();
+                List<String> templateList = new ArrayList<>();
+                templateMap.clear();
 
-            AppContext context = AppContext.get();
+                try {
+                    List<Ticket> templates = ticketRepo != null ? ticketRepo.findTemplates() : Collections.emptyList();
 
-            List<Ticket> templates = ticketRepo != null ? ticketRepo.findTemplates() : Collections.emptyList();
+                    for (Ticket ticket : templates) {
+                        UUID eventId = ticket.getEventId();
 
-            for (Ticket ticket : templates) {
-                UUID eventId = ticket.getEventId();
+                        String eventName = "Unknown";
+                        Event evt = eventId != null ? eventCacheById.get(eventId) : null;
+                        if (evt != null) {
+                            eventName = evt.getName();
+                        }
 
-                String eventName = "Unknown";
-                String sessionName = "N/A";  // Event-level template, no specific session
+                        String typeName = ticket.getType() != null ? ticket.getType().name() : "N/A";
+                        String priceStr = ticket.getPrice() != null ? ticket.getPrice().toString() : "0";
+                        String display = eventName + " (" + typeName + ": $" + priceStr + ")";
 
-                Event evt = eventId != null ? eventCacheById.get(eventId) : null;
-                if (evt != null) {
-                    eventName = evt.getName();
+                        templateList.add(display);
+                        templateMap.put(display, ticket.getId());
+                    }
+
+                    System.out.println("[Perf] loadTemplatesForAssignAsync completed in " +
+                            (System.currentTimeMillis() - start) + " ms, loaded " + templateList.size() + " templates");
+                } catch (Exception e) {
+                    System.err.println("Error loading templates for assign async: " + e.getMessage());
                 }
-
-                String typeName = ticket.getType() != null ? ticket.getType().name() : "N/A";
-                String priceStr = ticket.getPrice() != null ? ticket.getPrice().toString() : "0";
-                String display = eventName + " (" + typeName + ": $" + priceStr + ")";
-
-                templateList.add(display);
-                templateMap.put(display, ticket.getId());
+                return templateList;
             }
+        };
 
-            assignTemplateCombo.setItems(FXCollections.observableArrayList(templateList));
-            if (!templateList.isEmpty()) {
-                assignTemplateCombo.setValue(templateList.get(0));
-            }
+        task.setOnSucceeded(event -> {
+            List<String> templateList = task.getValue();
+            Platform.runLater(() -> {
+                assignTemplateCombo.setItems(FXCollections.observableArrayList(templateList));
+                if (!templateList.isEmpty()) {
+                    assignTemplateCombo.setValue(templateList.get(0));
+                }
+            });
+        });
 
-        } catch (Exception e) {
-            System.err.println("Error loading templates for assign: " + e.getMessage());
-        }
+        Thread t = new Thread(task, "async-templates-loader");
+        t.setDaemon(true);
+        t.start();
     }
 
     private void loadAssignedTickets() {
@@ -593,15 +653,17 @@ public class TicketManagerController {
                 try {
                     if (ticketRepo == null) return new AssignedTicketsData(tickets, assignedTickets);
 
+                    // Load assigned tickets using pagination (20 per page)
                     long dbAssignedStart = System.currentTimeMillis();
                     assignedTickets = ticketRepo.findAssignedByCursor(
                         lastAssignedCreatedAt,
                         lastAssignedId,
-                        PAGE_SIZE + 1
+                        PAGE_SIZE + 1  // Fetch one extra to detect more pages
                     );
                     System.out.println("[" + (runId != null ? runId : "AssignedTickets") + "] findAssignedByCursor() took " +
                             (System.currentTimeMillis() - dbAssignedStart) + " ms, size=" + assignedTickets.size());
 
+                    // Check if there are more pages
                     boolean hasMore = assignedTickets.size() > PAGE_SIZE;
                     if (hasMore) {
                         assignedTickets = assignedTickets.subList(0, PAGE_SIZE);
@@ -609,6 +671,55 @@ public class TicketManagerController {
 
                     AppContext context = AppContext.get();
 
+                    // Batch collect missing entities
+                    Set<UUID> missingAttendeeIds = new HashSet<>();
+                    Set<UUID> missingEventIds = new HashSet<>();
+
+                    for (Ticket ticket : assignedTickets) {
+                        UUID attendeeId = ticket.getAttendeeId();
+                        UUID eventId = ticket.getEventId();
+
+                        if (attendeeId != null && !attendeeCacheById.containsKey(attendeeId)) {
+                            missingAttendeeIds.add(attendeeId);
+                        }
+                        if (eventId != null && !eventCacheById.containsKey(eventId)) {
+                            missingEventIds.add(eventId);
+                        }
+                    }
+
+                    // Batch load missing attendees
+                    if (!missingAttendeeIds.isEmpty() && context.attendeeRepo != null) {
+                        long batchStart = System.currentTimeMillis();
+                        for (UUID attendeeId : missingAttendeeIds) {
+                            try {
+                                Attendee att = context.attendeeRepo.findById(attendeeId);
+                                if (att != null) {
+                                    attendeeCacheById.put(attendeeId, att);
+                                }
+                            } catch (Exception ignored) {}
+                        }
+                        System.out.println("[" + (runId != null ? runId : "AssignedTickets") + "] batch loaded " +
+                                missingAttendeeIds.size() + " attendees in " +
+                                (System.currentTimeMillis() - batchStart) + " ms");
+                    }
+
+                    // Batch load missing events
+                    if (!missingEventIds.isEmpty() && context.eventRepo != null) {
+                        long batchStart = System.currentTimeMillis();
+                        for (UUID eventId : missingEventIds) {
+                            try {
+                                Event evt = context.eventRepo.findById(eventId);
+                                if (evt != null) {
+                                    eventCacheById.put(eventId, evt);
+                                }
+                            } catch (Exception ignored) {}
+                        }
+                        System.out.println("[" + (runId != null ? runId : "AssignedTickets") + "] batch loaded " +
+                                missingEventIds.size() + " events in " +
+                                (System.currentTimeMillis() - batchStart) + " ms");
+                    }
+
+                    // Now build rows with cached data
                     for (Ticket ticket : assignedTickets) {
                         UUID attendeeId = ticket.getAttendeeId();
                         UUID eventId = ticket.getEventId();
@@ -618,29 +729,11 @@ public class TicketManagerController {
                         String sessionName = "N/A";
 
                         Attendee att = attendeeId != null ? attendeeCacheById.get(attendeeId) : null;
-                        if (att == null && context.attendeeRepo != null && attendeeId != null) {
-                            try {
-                                att = context.attendeeRepo.findById(attendeeId);
-                                if (att != null) {
-                                    attendeeCacheById.put(attendeeId, att);
-                                }
-                            } catch (Exception ignored) {
-                            }
-                        }
                         if (att != null && att.getFullName() != null) {
                             attendeeName = att.getFullName();
                         }
 
                         Event evt = eventId != null ? eventCacheById.get(eventId) : null;
-                        if (evt == null && context.eventRepo != null && eventId != null) {
-                            try {
-                                evt = context.eventRepo.findById(eventId);
-                                if (evt != null) {
-                                    eventCacheById.put(eventId, evt);
-                                }
-                            } catch (Exception ignored) {
-                            }
-                        }
                         if (evt != null && evt.getName() != null) {
                             eventName = evt.getName();
                         }
@@ -656,6 +749,7 @@ public class TicketManagerController {
                         ));
                     }
 
+                    // Update pagination cursor for next page load
                     if (!assignedTickets.isEmpty()) {
                         Ticket lastTicket = assignedTickets.get(assignedTickets.size() - 1);
                         lastAssignedCreatedAt = lastTicket.getCreatedAt();
@@ -676,11 +770,16 @@ public class TicketManagerController {
             AssignedTicketsData data = task.getValue();
             allAssignedTickets = data.tickets;
             displayAssignedTickets(allAssignedTickets);
-            loadAttendees();
-            loadTemplatesForAssign();
             calculateStatistics();
             System.out.println("[" + (runId != null ? runId : "AssignedTickets") + "] loadAssignedTickets total (task) " +
                     (System.currentTimeMillis() - asyncStart) + " ms");
+
+            // Update pagination UI
+            updateAssignedPaginationUI();
+
+            // Load attendees and templates in background (non-blocking)
+            loadAttendeesAsync();
+            loadTemplatesForAssignAsync();
         });
 
         task.setOnFailed(event -> {
@@ -752,24 +851,33 @@ public class TicketManagerController {
 
     private void calculateStatistics() {
         try {
-            int total = allAssignedTickets.size();
-            int active = (int) allAssignedTickets.stream()
-                    .filter(t -> t.status.equals("ACTIVE"))
-                    .count();
+            long startStats = System.currentTimeMillis();
 
+            int total = allAssignedTickets.size();
+            int active = 0;
             BigDecimal revenue = BigDecimal.ZERO;
+
+            // Single pass through the list for all calculations
             for (TicketRow t : allAssignedTickets) {
+                if (t.status != null && t.status.equals("ACTIVE")) {
+                    active++;
+                }
                 try {
-                    String priceStr = t.price.replace("$", "");
-                    revenue = revenue.add(new BigDecimal(priceStr));
+                    String priceStr = t.price.replace("$", "").trim();
+                    if (!priceStr.isEmpty()) {
+                        revenue = revenue.add(new BigDecimal(priceStr));
+                    }
                 } catch (Exception e) {
-                    // skip
+                    // skip invalid prices
                 }
             }
 
             totalAssignedLabel.setText(String.valueOf(total));
             activeAssignedLabel.setText(String.valueOf(active));
             totalRevenueLabel.setText("$" + revenue);
+
+            System.out.println("[Perf] calculateStatistics computed " + total + " tickets in " +
+                    (System.currentTimeMillis() - startStats) + " ms");
 
         } catch (Exception e) {
             System.err.println("Error calculating statistics: " + e.getMessage());
@@ -958,6 +1066,124 @@ public class TicketManagerController {
         @Override
         public int hashCode() {
             return Objects.hash(eventId, sessionId, type, price);
+        }
+    }
+
+    // ===== PAGINATION METHODS FOR ASSIGNED TICKETS =====
+
+    /**
+     * Load next page of assigned tickets
+     */
+    @FXML
+    public void onAssignedNextPage() {
+        if (lastAssignedCreatedAt != null && lastAssignedId != null && currentAssignedPage < totalAssignedPages) {
+            currentAssignedPage++;
+            loadAssignedTickets("AssignedNextPage-" + System.currentTimeMillis());
+        }
+    }
+
+    /**
+     * Load previous page (go back one page)
+     */
+    @FXML
+    public void onAssignedPrevPage() {
+        if (currentAssignedPage > 1) {
+            currentAssignedPage--;
+            // Need to reload from cursor of previous page
+            // For simplicity, reset to first page
+            if (currentAssignedPage == 1) {
+                lastAssignedCreatedAt = null;
+                lastAssignedId = null;
+            }
+            loadAssignedTickets("AssignedPrevPage-" + System.currentTimeMillis());
+        }
+    }
+
+    /**
+     * Load specific page (when user clicks page button)
+     */
+    public void onAssignedPageClick(int pageNumber) {
+        if (pageNumber >= 1 && pageNumber <= totalAssignedPages && pageNumber != currentAssignedPage) {
+            currentAssignedPage = pageNumber;
+            if (pageNumber == 1) {
+                lastAssignedCreatedAt = null;
+                lastAssignedId = null;
+            }
+            loadAssignedTickets("AssignedPage-" + pageNumber);
+        }
+    }
+
+    /**
+     * Update pagination UI with page buttons (1, 2, 3, ...)
+     */
+    private void updateAssignedPaginationUI() {
+        if (assignedPaginationBox == null) return;
+
+        // Recalculate total pages
+        long assignedCount = safeCountAssigned();
+        totalAssignedCount = assignedCount;
+        totalAssignedPages = Math.max(1, (int) Math.ceil(assignedCount / (double) PAGE_SIZE));
+
+        // Update page info label
+        if (assignedPageInfoLabel != null) {
+            assignedPageInfoLabel.setText("Page " + currentAssignedPage + " of " + totalAssignedPages);
+        }
+
+        // Clear existing page buttons
+        assignedPaginationBox.getChildren().clear();
+
+        // Generate page buttons (show max 5 pages at a time)
+        int startPage = Math.max(1, currentAssignedPage - 2);
+        int endPage = Math.min(totalAssignedPages, startPage + 4);
+
+        // Add "..." button if there are hidden pages at start
+        if (startPage > 1) {
+            Label ellipsis = new Label("...");
+            ellipsis.setStyle("-fx-font-size: 11; -fx-text-fill: #666;");
+            assignedPaginationBox.getChildren().add(ellipsis);
+        }
+
+        // Add page buttons
+        for (int i = startPage; i <= endPage; i++) {
+            Button pageBtn = new Button(String.valueOf(i));
+            final int pageNum = i;
+            pageBtn.setStyle("-fx-padding: 6 12; -fx-cursor: hand; -fx-font-size: 11;" +
+                    (i == currentAssignedPage ?
+                    " -fx-background-color: #3498db; -fx-text-fill: white; -fx-font-weight: bold;" :
+                    " -fx-background-color: #ecf0f1; -fx-text-fill: #2c3e50;"));
+            pageBtn.setOnAction(e -> onAssignedPageClick(pageNum));
+            assignedPaginationBox.getChildren().add(pageBtn);
+        }
+
+        // Add "..." button if there are hidden pages at end
+        if (endPage < totalAssignedPages) {
+            Label ellipsis = new Label("...");
+            ellipsis.setStyle("-fx-font-size: 11; -fx-text-fill: #666;");
+            assignedPaginationBox.getChildren().add(ellipsis);
+        }
+
+        // Update button states
+        if (assignedPrevButton != null) {
+            assignedPrevButton.setDisable(currentAssignedPage <= 1);
+        }
+        if (assignedNextButton != null) {
+            assignedNextButton.setDisable(currentAssignedPage >= totalAssignedPages);
+        }
+
+        System.out.println("[Pagination] Current page: " + currentAssignedPage + "/" + totalAssignedPages +
+                " (Total: " + assignedCount + " tickets)");
+    }
+
+    /**
+     * Update pagination button states
+     */
+    private void updateAssignedPaginationButtons(boolean hasMore) {
+        if (assignedNextButton != null) {
+            assignedNextButton.setDisable(!hasMore);
+        }
+        if (assignedPrevButton != null) {
+            // Previous button enabled only if not on first page
+            assignedPrevButton.setDisable(lastAssignedCreatedAt == null && lastAssignedId == null);
         }
     }
 }
