@@ -105,4 +105,7 @@ public class LoginController {
     public void onSignup() {
         SceneManager.switchTo("signup.fxml", "Event Manager System - Sign Up");
     }
+    public void onHomepage() {
+        SceneManager.switchTo("home.fxml", "Event Manager System");
+    }
 }

@@ -29,6 +29,7 @@ public class DashboardController {
     @FXML private Label userNameLabel;
     @FXML private Label userRoleLabel;
     @FXML private Label userEmailLabel;
+    @FXML private Label nOAssignedSessions;
 
     // Role-specific sections
     @FXML private VBox attendeeSection;
@@ -237,12 +238,22 @@ public class DashboardController {
         try {
             if (currentUser instanceof Presenter && appContext.sessionRepo != null) {
                 Presenter presenter = (Presenter) currentUser;
-                List<Session> sessions = appContext.sessionRepo.findAll();
+
+                long finalTotalAssigned = appContext.sessionRepo.countByPresenter(presenter.getId());
+
+                Platform.runLater(() -> {
+                    if (nOAssignedSessions != null) {
+                        nOAssignedSessions.setText(String.valueOf(finalTotalAssigned));
+                    }
+                });
+
+                System.out.println("Presenter " + presenter.getFullName()
+                        + " has " + finalTotalAssigned + " assigned sessions.");
+
 
                 // Filter sessions assigned to this presenter
                 // Note: This requires checking presenter_session mapping table
                 // For now, we'll display info
-                System.out.println("Presenter sessions count: " + sessions.size());
             }
         } catch (Exception e) {
             System.err.println("Error loading presenter content: " + e.getMessage());
@@ -455,6 +466,8 @@ public class DashboardController {
     public void onViewAssignedSessions() {
         // TODO: View presenter's assigned sessions
         System.out.println("View Assigned Sessions clicked");
+
+        SceneManager.switchTo("presenter_assigned_sessions.fxml", "My assigned sessions");
     }
 
     @FXML
@@ -473,6 +486,10 @@ public class DashboardController {
     public void onExportPresenterSummary() {
         // TODO: Export presenter activity summary
         System.out.println("Export Summary clicked");
+        SceneManager.switchTo(
+                "presenter_activity_export.fxml",
+                "Export Presenter Activity Summary"
+        );
     }
 
     @FXML
@@ -553,6 +570,12 @@ public class DashboardController {
     public void onUpdateProfile() {
         // TODO: Update user profile (generic for all roles)
         System.out.println("Update Profile clicked");
+
+        if (appContext.currentUser instanceof Presenter) {
+            SceneManager.switchTo("presenter_profile.fxml", "Update Profile");
+        }
+
+
     }
 
     @FXML

@@ -23,7 +23,11 @@ public interface SessionRepository {
     // Presenter assignment
     void assignPresenter(UUID sessionId, UUID presenterId);
 
+    List<Session> findByPresenter(UUID presenterId, int offset, int limit);
+
     void clearPresenters(UUID sessionId);
+
+    long countByPresenter(UUID presenterId);
 
     /**
      * Returns total number of sessions.
