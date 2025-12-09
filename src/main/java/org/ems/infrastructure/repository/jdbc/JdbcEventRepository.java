@@ -5,6 +5,7 @@ import org.ems.domain.model.enums.EventType;
 import org.ems.domain.model.Event;
 import org.ems.domain.repository.EventRepository;
 
+import javax.sql.DataSource;
 import java.sql.*;
 import java.time.LocalDate;
 import java.util.*;
@@ -12,9 +13,39 @@ import java.util.*;
 public class JdbcEventRepository implements EventRepository {
 
     private final Connection conn;
+    private final DataSource dataSource;  // ADDED: For getting fresh connections
 
     public JdbcEventRepository(Connection conn) {
         this.conn = conn;
+        this.dataSource = null;  // Legacy: single connection mode
+    }
+
+    public JdbcEventRepository(DataSource dataSource) {
+        this.dataSource = dataSource;
+        this.conn = null;  // DataSource mode
+    }
+
+    /**
+     * Get a database connection - either from pool or reuse existing
+     */
+    private Connection getConnection() throws SQLException {
+        if (dataSource != null) {
+            return dataSource.getConnection();  // Fresh connection from pool
+        }
+        return conn;  // Fallback to injected connection
+    }
+
+    /**
+     * Close connection only if from dataSource pool
+     */
+    private void closeConnection(Connection connection) {
+        if (dataSource != null && connection != null) {
+            try {
+                connection.close();  // Return to pool
+            } catch (SQLException e) {
+                // Ignore
+            }
+        }
     }
 
     // ---------------------------------------------------------
@@ -99,28 +130,65 @@ public class JdbcEventRepository implements EventRepository {
     }
 
     // ---------------------------------------------------------
-    // FIND ALL (with session count)
+    // FIND ALL (with session IDs)
     // ---------------------------------------------------------
     @Override
     public List<Event> findAll() {
-
         List<Event> list = new ArrayList<>();
+        Connection connection = null;
 
-        try (Statement st = conn.createStatement();
-             ResultSet rs = st.executeQuery("SELECT * FROM events")) {
+        try {
+            connection = getConnection();
 
-            while (rs.next()) {
-                Event e = mapRow(rs);
-                loadSessionIds(e);
-                list.add(e);
+            // Step 1: Load all events
+            long eventStart = System.currentTimeMillis();
+            List<Event> events = new ArrayList<>();
+            try (Statement st = connection.createStatement();
+                 ResultSet rs = st.executeQuery("SELECT * FROM events")) {
+                while (rs.next()) {
+                    events.add(mapRow(rs));
+                }
+            }
+            long eventTime = System.currentTimeMillis() - eventStart;
+            System.out.println("    ✓ Loaded " + events.size() + " events in " + eventTime + " ms");
+
+            if (events.isEmpty()) {
+                return events;
             }
 
+            // Step 2: Load ALL session IDs in ONE batch query (not N queries!)
+            long sessionStart = System.currentTimeMillis();
+            Map<java.util.UUID, List<java.util.UUID>> sessionMap = new HashMap<>();
+            try (Statement st = connection.createStatement();
+                 ResultSet rs = st.executeQuery("SELECT event_id, id FROM sessions")) {
+                while (rs.next()) {
+                    java.util.UUID eventId = (java.util.UUID) rs.getObject("event_id");
+                    java.util.UUID sessionId = (java.util.UUID) rs.getObject("id");
+                    sessionMap.computeIfAbsent(eventId, k -> new ArrayList<>()).add(sessionId);
+                }
+            }
+            long sessionTime = System.currentTimeMillis() - sessionStart;
+            System.out.println("    ✓ Batch loaded all sessions in " + sessionTime + " ms");
+
+            // Step 3: Assign session IDs to events (in-memory, no DB queries)
+            long assignStart = System.currentTimeMillis();
+            for (Event event : events) {
+                List<java.util.UUID> sessionIds = sessionMap.getOrDefault(event.getId(), new ArrayList<>());
+                event.getSessionIds().addAll(sessionIds);
+            }
+            long assignTime = System.currentTimeMillis() - assignStart;
+            System.out.println("    ✓ Assigned sessions to events in " + assignTime + " ms");
+
+            list.addAll(events);
         } catch (SQLException e) {
             throw new RuntimeException(e);
+        } finally {
+            closeConnection(connection);
         }
 
         return list;
     }
+
 
     // ---------------------------------------------------------
     // FIND BY TYPE
@@ -204,176 +272,30 @@ public class JdbcEventRepository implements EventRepository {
         return list;
     }
 
-    // ==========================================================
-    // OPTIMIZED METHODS WITH JOIN (Avoid N+1 Problem)
-    // ==========================================================
-
-    /**
-     * Find all events with session count in single query
-     * OPTIMIZED: Uses GROUP BY instead of N+1 queries
-     */
-    public List<Event> findAllOptimized() {
-        List<Event> list = new ArrayList<>();
-
-        String sql = """
-            SELECT DISTINCT e.* 
-            FROM events e
-            LEFT JOIN sessions s ON e.id = s.event_id
-            ORDER BY e.start_date DESC
-        """;
-
-        try (Statement st = conn.createStatement();
-             ResultSet rs = st.executeQuery(sql)) {
-
-            Map<UUID, Event> eventMap = new LinkedHashMap<>();
-            while (rs.next()) {
-                UUID eventId = (UUID) rs.getObject("id");
-                if (!eventMap.containsKey(eventId)) {
-                    Event e = mapRow(rs);
-                    eventMap.put(eventId, e);
-                }
-            }
-
-            // Now load session IDs efficiently in batch
-            loadSessionIdsOptimized(eventMap);
-            list.addAll(eventMap.values());
-
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
-        }
-
-        return list;
-    }
-
-    /**
-     * Find events by type with optimized JOIN
-     */
-    public List<Event> findByTypeOptimized(EventType type) {
-        List<Event> list = new ArrayList<>();
-
-        String sql = """
-            SELECT DISTINCT e.* 
-            FROM events e
-            LEFT JOIN sessions s ON e.id = s.event_id
-            WHERE e.type = ?
-            ORDER BY e.start_date DESC
-        """;
-
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, type.name());
-            ResultSet rs = ps.executeQuery();
-
-            Map<UUID, Event> eventMap = new LinkedHashMap<>();
-            while (rs.next()) {
-                UUID eventId = (UUID) rs.getObject("id");
-                if (!eventMap.containsKey(eventId)) {
-                    Event e = mapRow(rs);
-                    eventMap.put(eventId, e);
-                }
-            }
-
-            loadSessionIdsOptimized(eventMap);
-            list.addAll(eventMap.values());
-
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
-        }
-
-        return list;
-    }
-
-    /**
-     * Find events by status with optimized JOIN
-     */
-    public List<Event> findByStatusOptimized(EventStatus status) {
-        List<Event> list = new ArrayList<>();
-
-        String sql = """
-            SELECT DISTINCT e.* 
-            FROM events e
-            LEFT JOIN sessions s ON e.id = s.event_id
-            WHERE e.status = ?
-            ORDER BY e.start_date DESC
-        """;
-
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, status.name());
-            ResultSet rs = ps.executeQuery();
-
-            Map<UUID, Event> eventMap = new LinkedHashMap<>();
-            while (rs.next()) {
-                UUID eventId = (UUID) rs.getObject("id");
-                if (!eventMap.containsKey(eventId)) {
-                    Event e = mapRow(rs);
-                    eventMap.put(eventId, e);
-                }
-            }
-
-            loadSessionIdsOptimized(eventMap);
-            list.addAll(eventMap.values());
-
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
-        }
-
-        return list;
-    }
-
-    /**
-     * Find events by date range with optimized JOIN
-     */
-    public List<Event> findByDateOptimized(LocalDate date) {
-        List<Event> list = new ArrayList<>();
-
-        String sql = """
-            SELECT DISTINCT e.* 
-            FROM events e
-            LEFT JOIN sessions s ON e.id = s.event_id
-            WHERE e.start_date <= ? AND e.end_date >= ?
-            ORDER BY e.start_date DESC
-        """;
-
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setObject(1, date);
-            ps.setObject(2, date);
-            ResultSet rs = ps.executeQuery();
-
-            Map<UUID, Event> eventMap = new LinkedHashMap<>();
-            while (rs.next()) {
-                UUID eventId = (UUID) rs.getObject("id");
-                if (!eventMap.containsKey(eventId)) {
-                    Event e = mapRow(rs);
-                    eventMap.put(eventId, e);
-                }
-            }
-
-            loadSessionIdsOptimized(eventMap);
-            list.addAll(eventMap.values());
-
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
-        }
-
-        return list;
-    }
-
     // ---------------------------------------------------------
     // COUNT METHODS
     // ---------------------------------------------------------
     /**
      * Returns total number of events using SELECT COUNT(*).
+     * FIXED: Get fresh connection to avoid "Connection is closed" error in async operations
      */
     @Override
     public long count() {
         String sql = "SELECT COUNT(*) FROM events";
-        try (Statement st = conn.createStatement();
-             ResultSet rs = st.executeQuery(sql)) {
-            if (rs.next()) {
-                return rs.getLong(1);
+        Connection connection = null;
+        try {
+            connection = getConnection();
+            try (Statement st = connection.createStatement();
+                 ResultSet rs = st.executeQuery(sql)) {
+                if (rs.next()) {
+                    return rs.getLong(1);
+                }
+                return 0L;
             }
-            return 0L;
         } catch (SQLException e) {
             throw new RuntimeException("Failed to count events", e);
+        } finally {
+            closeConnection(connection);
         }
     }
 
@@ -398,22 +320,29 @@ public class JdbcEventRepository implements EventRepository {
     // ---------------------------------------------------------
     /**
      * Returns a paginated list of events.
+     * FIXED: Use getConnection() for fresh connection from pool
      */
     public List<Event> findPage(int offset, int limit) {
         List<Event> list = new ArrayList<>();
         String sql = "SELECT * FROM events ORDER BY start_date DESC NULLS LAST, id DESC LIMIT ? OFFSET ?";
 
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, limit);
-            ps.setInt(2, offset);
+        Connection connection = null;
+        try {
+            connection = getConnection();
+            try (PreparedStatement ps = connection.prepareStatement(sql)) {
+                ps.setInt(1, limit);
+                ps.setInt(2, offset);
 
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    list.add(mapRow(rs));
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        list.add(mapRow(rs));
+                    }
                 }
             }
         } catch (SQLException e) {
             throw new RuntimeException("Failed to page events", e);
+        } finally {
+            closeConnection(connection);
         }
 
         return list;
@@ -442,7 +371,20 @@ public class JdbcEventRepository implements EventRepository {
     // LOAD sessionIds from "sessions" table
     // ---------------------------------------------------------
     private void loadSessionIds(Event e) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(
+        Connection connection = null;
+        try {
+            connection = getConnection();
+            loadSessionIds(e, connection);
+        } finally {
+            closeConnection(connection);
+        }
+    }
+
+    /**
+     * Load session IDs using provided connection (to reuse same connection)
+     */
+    private void loadSessionIds(Event e, Connection connection) throws SQLException {
+        try (PreparedStatement ps = connection.prepareStatement(
                 "SELECT id FROM sessions WHERE event_id=?"
         )) {
             ps.setObject(1, e.getId());
@@ -454,33 +396,5 @@ public class JdbcEventRepository implements EventRepository {
             }
         }
     }
+}
 
-    /**
-     * OPTIMIZED: Load session IDs for multiple events in one query
-     * Instead of N queries (one per event), load all in 1 query
-     */
-    private void loadSessionIdsOptimized(Map<UUID, Event> eventMap) throws SQLException {
-        if (eventMap.isEmpty()) return;
-
-        String eventIds = eventMap.keySet().stream()
-                .map(id -> "'" + id.toString() + "'")
-                .reduce((a, b) -> a + "," + b)
-                .orElse("");
-
-        String sql = "SELECT event_id, id FROM sessions WHERE event_id IN (" + eventIds + ")";
-
-        try (Statement st = conn.createStatement();
-             ResultSet rs = st.executeQuery(sql)) {
-
-            while (rs.next()) {
-                UUID eventId = (UUID) rs.getObject("event_id");
-                UUID sessionId = (UUID) rs.getObject("id");
-
-                Event event = eventMap.get(eventId);
-                if (event != null) {
-                    event.getSessionIds().add(sessionId);
-                }
-            }
-        }
-    }
-    }

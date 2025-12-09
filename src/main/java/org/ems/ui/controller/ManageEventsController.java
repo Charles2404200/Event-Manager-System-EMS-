@@ -142,8 +142,8 @@ public class ManageEventsController {
 
             List<Event> events;
             if (eventRepo instanceof JdbcEventRepository jdbcRepo) {
-                // Dùng bản join tối ưu sẵn nếu có
-                events = jdbcRepo.findAllOptimized();
+                // Use optimized findAll() method
+                events = jdbcRepo.findAll();
             } else {
                 events = eventRepo.findAll();
             }

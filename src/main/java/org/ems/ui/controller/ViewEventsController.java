@@ -1,5 +1,6 @@
 package org.ems.ui.controller;
 
+import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
 import javafx.fxml.FXML;
@@ -61,19 +62,26 @@ public class ViewEventsController {
     private final Map<UUID, Presenter> presenterCache = new HashMap<>();
     private final Map<UUID, List<Session>> sessionCache = new HashMap<>();
     private final Map<UUID, Image> imageCache = new HashMap<>();
-    private final Map<UUID, Event> eventCache = new HashMap<>();  // NEW: Cache events
+    private final Map<UUID, Event> eventCache = new HashMap<>();  // Cache all events
+    private List<Event> cachedAllEvents = null;  // OPTIMIZED: Cache findAll() result
+    private List<UUID> cachedFilteredIds = null;  // OPTIMIZED: Cache filtered IDs
     private final Set<UUID> userRegisteredEvents = new HashSet<>();
     private List<EventRow> currentPageCache = new ArrayList<>();
 
     @FXML
     public void initialize() {
+        long initStart = System.currentTimeMillis();
+        System.out.println("⚙️ [ViewEvents] initialize() starting...");
         try {
+            long appStart = System.currentTimeMillis();
             appContext = AppContext.get();
             eventRepo = appContext.eventRepo;
             sessionRepo = appContext.sessionRepo;
             presenterRepo = appContext.presenterRepo;
             imageService = appContext.imageService;
+            System.out.println("  ✓ AppContext initialized in " + (System.currentTimeMillis() - appStart) + " ms");
 
+            long comboStart = System.currentTimeMillis();
             typeFilterCombo.setItems(FXCollections.observableArrayList(
                     "ALL", "CONFERENCE", "WORKSHOP", "CONCERT", "EXHIBITION", "SEMINAR"
             ));
@@ -83,121 +91,200 @@ public class ViewEventsController {
                     "ALL", "SCHEDULED", "ONGOING", "COMPLETED", "CANCELLED"
             ));
             statusFilterCombo.setValue("ALL");
+            System.out.println("  ✓ Combos initialized in " + (System.currentTimeMillis() - comboStart) + " ms");
 
+            long colStart = System.currentTimeMillis();
             setupTableColumns();
+            System.out.println("  ✓ Table columns setup in " + (System.currentTimeMillis() - colStart) + " ms");
 
+            long eventStart = System.currentTimeMillis();
             typeFilterCombo.setOnAction(e -> applyFiltersAndReset());
             statusFilterCombo.setOnAction(e -> applyFiltersAndReset());
             searchField.setOnAction(e -> applyFiltersAndReset());
+            System.out.println("  ✓ Event listeners setup in " + (System.currentTimeMillis() - eventStart) + " ms");
 
-            // Load first page asynchronously with progress
-            loadEventsPageAsync(0, null); // no extra filter yet
+            System.out.println("  ✓ About to load initial data...");
+            long initialLoadStart = System.currentTimeMillis();
+            loadEventsPageAsync(0, null);
+            System.out.println("  ✓ Initial load async started in " + (System.currentTimeMillis() - initialLoadStart) + " ms");
 
+            System.out.println("✓ Dashboard loaded successfully");
+            System.out.println("✓ initialize() completed in " + (System.currentTimeMillis() - initStart) + " ms");
         } catch (Exception e) {
+            System.err.println("✗ initialize() failed: " + e.getMessage());
+            e.printStackTrace();
             showAlert("Error", "Failed to initialize: " + e.getMessage());
         }
     }
 
     private void setupTableColumns() {
-        // Columns are defined in FXML in order:
-        // 0: Image, 1: Event Name, 2: Type, 3: Location, 4: Start Date, 5: End Date, 6: Status, 7: Sessions, 8: Registered
-        if (eventsTable == null) return;
-        var columns = eventsTable.getColumns();
-        if (columns.size() < 9) return;
+        long colStart = System.currentTimeMillis();
+        System.out.println("📋 [ViewEvents] setupTableColumns() starting...");
+        try {
+            // Columns are defined in FXML in order:
+            // 0: Image, 1: Event Name, 2: Type, 3: Location, 4: Start Date, 5: End Date, 6: Status, 7: Sessions, 8: Registered
+            if (eventsTable == null) return;
+            var columns = eventsTable.getColumns();
+            if (columns.size() < 9) return;
 
-        // Image column with thumbnail preview - USE EventRow.imagePath directly!
-        TableColumn<EventRow, String> imageCol = (TableColumn<EventRow, String>) columns.get(0);
-        imageCol.setCellValueFactory(cd -> new SimpleStringProperty(cd.getValue().imagePath));
-        imageCol.setCellFactory(col -> new TableCell<EventRow, String>() {
-            @Override
-            protected void updateItem(String imagePath, boolean empty) {
-                super.updateItem(imagePath, empty);
-                if (empty || imagePath == null || imagePath.isEmpty()) {
-                    setText("📷");
-                    setGraphic(null);
-                    setStyle("-fx-alignment: center; -fx-text-fill: #999;");
-                    return;
-                }
-
-                try {
-                    EventRow row = getTableView().getItems().get(getIndex());
-
-                    // Check cache first
-                    Image cachedImage = imageCache.get(row.eventId);
-                    if (cachedImage == null) {
-                        // Load asynchronously in background
-                        cachedImage = loadImage(imagePath);
-                        if (cachedImage != null) {
-                            imageCache.put(row.eventId, cachedImage);
-                        }
+            // OPTIMIZED: Image column - Load async and display thumbnail
+            long imgColStart = System.currentTimeMillis();
+            TableColumn<EventRow, String> imageCol = (TableColumn<EventRow, String>) columns.get(0);
+            imageCol.setCellValueFactory(cd -> new SimpleStringProperty(cd.getValue().imagePath));
+            imageCol.setCellFactory(col -> new TableCell<>() {
+                @Override
+                protected void updateItem(String imagePath, boolean empty) {
+                    super.updateItem(imagePath, empty);
+                    if (empty || imagePath == null || imagePath.isEmpty()) {
+                        setText(null);
+                        setGraphic(null);
+                        return;
                     }
 
-                    if (cachedImage != null) {
-                        ImageView imageView = new ImageView(cachedImage);
-                        imageView.setFitWidth(80);
-                        imageView.setFitHeight(60);
-                        imageView.setPreserveRatio(true);
-                        imageView.setStyle("-fx-border-color: #ddd; -fx-border-width: 1; -fx-border-radius: 3;");
-                        setGraphic(imageView);
+                    try {
+                        EventRow row = getTableView().getItems().get(getIndex());
+
+                        // Check cache first
+                        Image cachedImage = imageCache.get(row.eventId);
+                        if (cachedImage != null) {
+                            displayImage(cachedImage);
+                            return;
+                        }
+
+                        // Show loading placeholder
+                        Label loadingLabel = new Label("⏳");
+                        loadingLabel.setStyle("-fx-font-size: 20; -fx-padding: 5;");
+                        setGraphic(loadingLabel);
                         setText(null);
-                    } else {
+
+                        // Load image async in background
+                        AsyncTaskService.runAsync(
+                                () -> {
+                                    try {
+                                        return loadImage(imagePath);
+                                    } catch (Exception e) {
+                                        System.err.println("Error loading image: " + e.getMessage());
+                                        return null;
+                                    }
+                                },
+                                loadedImage -> {
+                                    if (loadedImage != null) {
+                                        imageCache.put(row.eventId, loadedImage);
+                                        // Only update if still visible
+                                        if (getIndex() >= 0 && getIndex() < getTableView().getItems().size()) {
+                                            if (getTableView().getItems().get(getIndex()).eventId.equals(row.eventId)) {
+                                                displayImage(loadedImage);
+                                            }
+                                        }
+                                    } else {
+                                        setText("❌");
+                                        setGraphic(null);
+                                    }
+                                },
+                                error -> {
+                                    setText("❌");
+                                    setGraphic(null);
+                                }
+                        );
+                    } catch (Exception e) {
                         setText("❌");
                         setGraphic(null);
-                        setStyle("-fx-alignment: center;");
                     }
-                } catch (Exception e) {
-                    setText("❌");
-                    setGraphic(null);
-                    setStyle("-fx-alignment: center;");
                 }
-            }
-        });
 
-        ((TableColumn<EventRow, String>) columns.get(1)).setCellValueFactory(cd ->
-                new SimpleStringProperty(cd.getValue().name));
-        ((TableColumn<EventRow, String>) columns.get(2)).setCellValueFactory(cd ->
-                new SimpleStringProperty(cd.getValue().type));
-        ((TableColumn<EventRow, String>) columns.get(3)).setCellValueFactory(cd ->
-                new SimpleStringProperty(cd.getValue().location));
-        ((TableColumn<EventRow, String>) columns.get(4)).setCellValueFactory(cd ->
-                new SimpleStringProperty(cd.getValue().startDate));
-        ((TableColumn<EventRow, String>) columns.get(5)).setCellValueFactory(cd ->
-                new SimpleStringProperty(cd.getValue().endDate));
-        ((TableColumn<EventRow, String>) columns.get(6)).setCellValueFactory(cd ->
-                new SimpleStringProperty(cd.getValue().status));
-        ((TableColumn<EventRow, String>) columns.get(7)).setCellValueFactory(cd ->
-                new SimpleStringProperty(String.valueOf(cd.getValue().sessionCount)));
-        ((TableColumn<EventRow, String>) columns.get(8)).setCellValueFactory(cd ->
-                new SimpleStringProperty(cd.getValue().isRegistered ? "✓ Yes" : "No"));
+                private void displayImage(Image image) {
+                    if (image == null) {
+                        setText("No Image");
+                        setGraphic(null);
+                        return;
+                    }
+
+                    ImageView imageView = new ImageView(image);
+                    imageView.setFitWidth(80);
+                    imageView.setFitHeight(60);
+                    imageView.setPreserveRatio(true);
+                    imageView.setStyle("-fx-border-color: #ddd; -fx-border-width: 1;");
+                    setGraphic(imageView);
+                    setText(null);
+                }
+            });
+            System.out.println("  ✓ Image column setup in " + (System.currentTimeMillis() - imgColStart) + " ms");
+
+            // ...existing code...
+            ((TableColumn<EventRow, String>) columns.get(1)).setCellValueFactory(cd ->
+                    new SimpleStringProperty(cd.getValue().name));
+            ((TableColumn<EventRow, String>) columns.get(2)).setCellValueFactory(cd ->
+                    new SimpleStringProperty(cd.getValue().type));
+            ((TableColumn<EventRow, String>) columns.get(3)).setCellValueFactory(cd ->
+                    new SimpleStringProperty(cd.getValue().location));
+            ((TableColumn<EventRow, String>) columns.get(4)).setCellValueFactory(cd ->
+                    new SimpleStringProperty(cd.getValue().startDate));
+            ((TableColumn<EventRow, String>) columns.get(5)).setCellValueFactory(cd ->
+                    new SimpleStringProperty(cd.getValue().endDate));
+            ((TableColumn<EventRow, String>) columns.get(6)).setCellValueFactory(cd ->
+                    new SimpleStringProperty(cd.getValue().status));
+            ((TableColumn<EventRow, String>) columns.get(7)).setCellValueFactory(cd ->
+                    new SimpleStringProperty(String.valueOf(cd.getValue().sessionCount)));
+            ((TableColumn<EventRow, String>) columns.get(8)).setCellValueFactory(cd ->
+                    new SimpleStringProperty(cd.getValue().isRegistered ? "✓ Yes" : "No"));
+
+            System.out.println("  ✓ All table columns setup in " + (System.currentTimeMillis() - colStart) + " ms");
+        } catch (Exception e) {
+            System.err.println("✗ setupTableColumns() failed: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 
     /**
      * Async load events for a given page from DB using LIMIT/OFFSET.
      * If filteredIds != null, we page over that in-memory ID list instead.
+     * OPTIMIZED: All DB operations on background thread
      */
     private void loadEventsPageAsync(int page, List<UUID> filteredIds) {
+        long pageStart = System.currentTimeMillis();
+        System.out.println("📄 [ViewEvents] loadEventsPageAsync(page=" + page + ", filteredIds=" +
+                (filteredIds != null ? filteredIds.size() : "null") + ") starting...");
+
         showLoadingPlaceholder();
         updateInTableProgress(0);
+        System.out.println("  ✓ Loading placeholder shown");
 
+        System.out.println("  ✓ Starting background task...");
         AsyncTaskService.runAsync(
                 () -> {
+                    long taskStart = System.currentTimeMillis();
+                    System.out.println("    🔄 [Background Thread] Task executing...");
                     try {
-                        if (eventRepo == null) return Collections.<EventRow>emptyList();
+                        if (eventRepo == null) {
+                            System.err.println("    ✗ eventRepo is null!");
+                            return Collections.<EventRow>emptyList();
+                        }
 
+                        long countStart = System.currentTimeMillis();
+                        System.out.println("    🔄 [Background Thread] Counting events...");
                         if (filteredIds == null) {
                             totalEvents = eventRepo.count();
                         } else {
                             totalEvents = filteredIds.size();
                         }
+                        long countTime = System.currentTimeMillis() - countStart;
+                        System.out.println("    ✓ Count took " + countTime + " ms: " + totalEvents + " events");
+
                         totalPages = totalEvents == 0 ? 0 : (int) Math.ceil((double) totalEvents / ITEMS_PER_PAGE);
-                        if (totalPages == 0) return Collections.<EventRow>emptyList();
+                        if (totalPages == 0) {
+                            System.out.println("    ⚠️ No pages");
+                            return Collections.<EventRow>emptyList();
+                        }
 
                         int safePage = Math.max(0, Math.min(page, totalPages - 1));
                         int offset = safePage * ITEMS_PER_PAGE;
 
+                        long loadStart = System.currentTimeMillis();
+                        System.out.println("    🔄 [Background Thread] Loading events...");
                         List<Event> events;
                         if (filteredIds == null) {
                             events = eventRepo.findPage(offset, ITEMS_PER_PAGE);
+                            System.out.println("    ✓ findPage() took " + (System.currentTimeMillis() - loadStart) + " ms: " + events.size() + " events");
                         } else {
                             int end = Math.min(offset + ITEMS_PER_PAGE, filteredIds.size());
                             List<UUID> pageIds = filteredIds.subList(offset, end);
@@ -206,12 +293,20 @@ public class ViewEventsController {
                                 Event e = eventRepo.findById(id);
                                 if (e != null) events.add(e);
                             }
+                            System.out.println("    ✓ Loaded " + events.size() + " events from filteredIds in " + (System.currentTimeMillis() - loadStart) + " ms");
                         }
 
                         updateInTableProgress(40);
+
+                        long regStart = System.currentTimeMillis();
+                        System.out.println("    🔄 [Background Thread] Preloading registrations...");
                         preloadUserRegistrations();
+                        System.out.println("    ✓ preloadUserRegistrations() in " + (System.currentTimeMillis() - regStart) + " ms");
+
                         updateInTableProgress(60);
 
+                        long rowStart = System.currentTimeMillis();
+                        System.out.println("    🔄 [Background Thread] Building rows...");
                         List<EventRow> rows = new ArrayList<>();
                         for (Event event : events) {
                             rows.add(new EventRow(
@@ -224,11 +319,15 @@ public class ViewEventsController {
                                     event.getStatus().name(),
                                     0,
                                     userRegisteredEvents.contains(event.getId()),
-                                    event.getImagePath()  // NEW: Add image path from event
+                                    event.getImagePath()
                             ));
                         }
+                        System.out.println("    ✓ Built " + rows.size() + " rows in " + (System.currentTimeMillis() - rowStart) + " ms");
 
                         updateInTableProgress(80);
+
+                        long sessionStart = System.currentTimeMillis();
+                        System.out.println("    🔄 [Background Thread] Loading session counts...");
                         if (sessionRepo != null && !rows.isEmpty()) {
                             List<UUID> ids = rows.stream().map(er -> er.eventId).collect(Collectors.toList());
                             Map<UUID, Integer> counts = sessionRepo.countByEventIds(ids);
@@ -236,24 +335,48 @@ public class ViewEventsController {
                                 er.sessionCount = counts.getOrDefault(er.eventId, 0);
                             }
                         }
+                        System.out.println("    ✓ Session counts loaded in " + (System.currentTimeMillis() - sessionStart) + " ms");
 
                         updateInTableProgress(95);
                         currentPage = safePage;
+
+                        long taskTime = System.currentTimeMillis() - taskStart;
+                        System.out.println("    ✓ Background task completed in " + taskTime + " ms");
                         return rows;
 
                     } catch (Exception ex) {
+                        long failTime = System.currentTimeMillis() - taskStart;
+                        System.err.println("    ✗ Background task failed in " + failTime + " ms");
                         ex.printStackTrace();
                         return Collections.<EventRow>emptyList();
                     }
                 },
                 rows -> {
+                    long uiStart = System.currentTimeMillis();
+                    System.out.println("  ✓ Background task returned, updating UI...");
                     updateInTableProgress(100);
                     currentPageCache = rows;
+                    System.out.println("    🔄 Setting table items (" + rows.size() + " rows)...");
                     eventsTable.setItems(FXCollections.observableArrayList(rows));
+                    System.out.println("    ✓ Table items set in " + (System.currentTimeMillis() - uiStart) + " ms");
+
+                    long paginationTime = System.currentTimeMillis();
                     updatePaginationInfo();
+                    System.out.println("    ✓ Pagination updated in " + (System.currentTimeMillis() - paginationTime) + " ms");
+
+                    long showTime = System.currentTimeMillis();
                     showTable();
+                    System.out.println("    ✓ Table shown in " + (System.currentTimeMillis() - showTime) + " ms");
+
+                    long totalUiTime = System.currentTimeMillis() - uiStart;
+                    System.out.println("  ✓ UI update completed in " + totalUiTime + " ms");
+                    System.out.println("✓ loadEventsPageAsync() completed in " + (System.currentTimeMillis() - pageStart) + " ms");
                 },
                 error -> {
+                    long errorTime = System.currentTimeMillis() - pageStart;
+                    System.err.println("✗ loadEventsPageAsync() failed in " + errorTime + " ms");
+                    System.err.println("  Error: " + error.getMessage());
+                    error.printStackTrace();
                     showTable();
                     showAlert("Error", "Failed to load events: " + error.getMessage());
                 }
@@ -347,53 +470,110 @@ public class ViewEventsController {
      * Apply filters and reset to page 1
      */
     private void applyFiltersAndReset() {
+        System.out.println("🔄 [ViewEvents] applyFiltersAndReset() called");
         currentPage = 0;
-        applyFiltersWithPagination();
+        // Move to background immediately
+        Platform.runLater(this::applyFiltersWithPagination);
     }
 
     /**
-     * Apply filters with pagination
+     * Apply filters with pagination - OPTIMIZED: Cache all events, filter in-memory on background thread
      */
     private void applyFiltersWithPagination() {
+        long filterStart = System.currentTimeMillis();
+        System.out.println("🔍 [ViewEvents] applyFiltersWithPagination() starting...");
+
         try {
-            if (eventRepo == null) return;
+            if (eventRepo == null) {
+                System.err.println("  ✗ eventRepo is null!");
+                return;
+            }
+
+            showLoadingPlaceholder();
+            updateInTableProgress(0);
 
             String searchTerm = searchField.getText().toLowerCase();
             String typeFilter = typeFilterCombo.getValue();
             String statusFilter = statusFilterCombo.getValue();
+            System.out.println("  Search: '" + searchTerm + "', Type: " + typeFilter + ", Status: " + statusFilter);
 
-            // Simple approach: filter from full list (findAllOptimized), then paginate IDs via memory
-            List<Event> base = eventRepo.findAll();
-            List<Event> filtered = base.stream()
-                    .filter(e -> "ALL".equals(typeFilter) || e.getType().name().equals(typeFilter))
-                    .filter(e -> "ALL".equals(statusFilter) || e.getStatus().name().equals(statusFilter))
-                    .filter(e -> searchTerm.isEmpty() ||
-                            e.getName().toLowerCase().contains(searchTerm) ||
-                            e.getLocation().toLowerCase().contains(searchTerm))
-                    .collect(Collectors.toList());
+            // OPTIMIZED: Run filter on background thread to prevent UI freeze
+            System.out.println("  🔄 Starting background filter task...");
+            AsyncTaskService.runAsync(
+                    () -> {
+                        long bgStart = System.currentTimeMillis();
+                        System.out.println("    🔄 [Background Thread] Filter task executing...");
 
-            List<UUID> filteredIds = filtered.stream().map(Event::getId).collect(Collectors.toList());
+                        // Load all events ONCE and cache
+                        if (cachedAllEvents == null) {
+                            long allStart = System.currentTimeMillis();
+                            System.out.println("    🔄 [Background Thread] Loading all events (first time)...");
+                            cachedAllEvents = eventRepo.findAll();
+                            long allTime = System.currentTimeMillis() - allStart;
+                            System.out.println("    ✓ eventRepo.findAll() took " + allTime + " ms, loaded " + cachedAllEvents.size() + " events");
+                        } else {
+                            System.out.println("    ℹ Using cached all events (" + cachedAllEvents.size() + " events)");
+                        }
 
-            // Load first page of this filtered result
-            loadEventsPageAsync(0, filteredIds);
+                        // Filter in-memory (fast, no DB query)
+                        long streamStart = System.currentTimeMillis();
+                        System.out.println("    🔄 [Background Thread] Filtering events...");
+                        List<Event> filtered = cachedAllEvents.stream()
+                                .filter(e -> "ALL".equals(typeFilter) || e.getType().name().equals(typeFilter))
+                                .filter(e -> "ALL".equals(statusFilter) || e.getStatus().name().equals(statusFilter))
+                                .filter(e -> searchTerm.isEmpty() ||
+                                        e.getName().toLowerCase().contains(searchTerm) ||
+                                        e.getLocation().toLowerCase().contains(searchTerm))
+                                .collect(Collectors.toList());
+
+                        long streamTime = System.currentTimeMillis() - streamStart;
+                        List<UUID> filteredIds = filtered.stream().map(Event::getId).collect(Collectors.toList());
+                        System.out.println("    ✓ Stream filtering took " + streamTime + " ms, filtered to " + filteredIds.size() + " events");
+
+                        long totalTime = System.currentTimeMillis() - bgStart;
+                        System.out.println("    ✓ applyFiltersWithPagination background task took " + totalTime + " ms");
+
+                        return filteredIds;
+                    },
+                    filteredIds -> {
+                        System.out.println("  ✓ Filter task returned " + filteredIds.size() + " results");
+                        System.out.println("  🔄 Loading first page...");
+                        loadEventsPageAsync(0, filteredIds);
+                    },
+                    error -> {
+                        System.err.println("  ✗ Filter task failed: " + error.getMessage());
+                        showTable();
+                        showAlert("Error", "Filter failed: " + error.getMessage());
+                    }
+            );
+            System.out.println("  ✓ Background filter task started");
 
         } catch (Exception e) {
+            System.err.println("✗ applyFiltersWithPagination exception: " + e.getMessage());
+            e.printStackTrace();
             showAlert("Error", "Filter failed: " + e.getMessage());
         }
     }
 
     @FXML
     public void onSearch() {
+        System.out.println("🔎 [ViewEvents] onSearch() called - starting filter");
         applyFiltersAndReset();
     }
 
     @FXML
     public void onReset() {
+        System.out.println("🔄 [ViewEvents] onReset() called");
         searchField.clear();
         typeFilterCombo.setValue("ALL");
         statusFilterCombo.setValue("ALL");
         currentPage = 0;
-        loadEventsPageAsync(0, null);
+
+        // Ensure async execution
+        Platform.runLater(() -> {
+            System.out.println("  🔄 Loading first page from reset...");
+            loadEventsPageAsync(0, null);
+        });
     }
 
     @FXML
@@ -408,83 +588,108 @@ public class ViewEventsController {
 
     @FXML
     public void onBuyTicket() {
+        long buyStart = System.currentTimeMillis();
+        System.out.println("🛒 [ViewEvents] onBuyTicket() starting...");
+
         EventRow selected = eventsTable.getSelectionModel().getSelectedItem();
         if (selected == null) {
             showAlert("Warning", "Please select an event");
             return;
         }
 
-        try {
-            List<Ticket> availableTickets = new ArrayList<>();
-            if (appContext.ticketRepo != null) { // sửa cú pháp if
-                List<Ticket> allTickets = appContext.ticketRepo.findByEvent(selected.eventId);
-                for (Ticket ticket : allTickets) {
-                    if (ticket.getAttendeeId() == null) {
-                        availableTickets.add(ticket);
+        // Load tickets async to prevent UI freeze
+        AsyncTaskService.runAsync(
+                () -> {
+                    long loadStart = System.currentTimeMillis();
+                    try {
+                        List<Ticket> availableTickets = new ArrayList<>();
+                        if (appContext.ticketRepo != null) {
+                            List<Ticket> allTickets = appContext.ticketRepo.findByEvent(selected.eventId);
+                            System.out.println("  ✓ findByEvent() took " + (System.currentTimeMillis() - loadStart) + " ms");
+                            for (Ticket ticket : allTickets) {
+                                if (ticket.getAttendeeId() == null) {
+                                    availableTickets.add(ticket);
+                                }
+                            }
+                        }
+                        return availableTickets;
+                    } catch (Exception e) {
+                        System.err.println("  ✗ Error loading tickets: " + e.getMessage());
+                        return new ArrayList<>();
                     }
-                }
-            }
-
-            if (availableTickets.isEmpty()) {
-                showAlert("Info", "No available tickets");
-                return;
-            }
-
-            Dialog<ButtonType> dialog = new Dialog<>();
-            dialog.setTitle("Buy Ticket");
-            dialog.setHeaderText("Select ticket for: " + selected.name);
-
-            VBox content = new VBox(10);
-            content.setPadding(new Insets(10));
-
-            Label infoLabel = new Label("Available Tickets:");
-            ComboBox<String> ticketCombo = new ComboBox<>();
-            List<String> ticketDisplay = new ArrayList<>();
-            Map<String, Ticket> ticketMap = new HashMap<>();
-
-            for (Ticket ticket : availableTickets) {
-                String display = ticket.getType().name() + " - $" + ticket.getPrice();
-                ticketDisplay.add(display);
-                ticketMap.put(display, ticket);
-            }
-
-            ticketCombo.setItems(FXCollections.observableArrayList(ticketDisplay));
-            if (!ticketDisplay.isEmpty()) {
-                ticketCombo.setValue(ticketDisplay.get(0));
-            }
-            ticketCombo.setPrefWidth(300);
-
-            content.getChildren().addAll(infoLabel, ticketCombo);
-            dialog.getDialogPane().setContent(content);
-            dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
-
-            if (dialog.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
-                String selectedTicket = ticketCombo.getValue();
-                Ticket selectedTemplate = ticketMap.get(selectedTicket);
-
-                if (selectedTemplate != null && appContext.currentUser instanceof Attendee attendee) {
-                    Ticket newTicket = new Ticket();
-                    newTicket.setId(UUID.randomUUID());
-                    newTicket.setAttendeeId(attendee.getId());
-                    newTicket.setEventId(selectedTemplate.getEventId());
-                    // Note: sessionId removed - tickets are now event-level only
-                    newTicket.setType(selectedTemplate.getType());
-                    newTicket.setPrice(selectedTemplate.getPrice());
-                    newTicket.setTicketStatus(TicketStatus.ACTIVE);
-                    newTicket.setPaymentStatus(PaymentStatus.PAID);
-                    newTicket.setQrCodeData("QR-" + newTicket.getId().toString().substring(0, 12).toUpperCase());
-
-                    if (appContext.ticketRepo != null) {
-                        appContext.ticketRepo.save(newTicket);
-                        showQRCodeDialog(newTicket, selected.name);
-                        loadEventsPageAsync(currentPage, null);
+                },
+                availableTickets -> {
+                    if (availableTickets.isEmpty()) {
+                        showAlert("Info", "No available tickets");
+                        return;
                     }
-                }
-            }
 
-        } catch (Exception e) {
-            showAlert("Error", "Error buying ticket: " + e.getMessage());
-        }
+                    Dialog<ButtonType> dialog = new Dialog<>();
+                    dialog.setTitle("Buy Ticket");
+                    dialog.setHeaderText("Select ticket for: " + selected.name);
+
+                    VBox content = new VBox(10);
+                    content.setPadding(new Insets(10));
+
+                    Label infoLabel = new Label("Available Tickets:");
+                    ComboBox<String> ticketCombo = new ComboBox<>();
+                    List<String> ticketDisplay = new ArrayList<>();
+                    Map<String, Ticket> ticketMap = new HashMap<>();
+
+                    @SuppressWarnings("unchecked")
+                    List<Ticket> ticketList = (List<Ticket>) availableTickets;
+                    for (Ticket ticket : ticketList) {
+                        String display = ticket.getType().name() + " - $" + ticket.getPrice();
+                        ticketDisplay.add(display);
+                        ticketMap.put(display, ticket);
+                    }
+
+                    ticketCombo.setItems(FXCollections.observableArrayList(ticketDisplay));
+                    if (!ticketDisplay.isEmpty()) {
+                        ticketCombo.setValue(ticketDisplay.get(0));
+                    }
+                    ticketCombo.setPrefWidth(300);
+
+                    content.getChildren().addAll(infoLabel, ticketCombo);
+                    dialog.getDialogPane().setContent(content);
+                    dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+
+                    if (dialog.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
+                        String selectedTicket = ticketCombo.getValue();
+                        Ticket selectedTemplate = ticketMap.get(selectedTicket);
+
+                        if (selectedTemplate != null && appContext.currentUser instanceof Attendee attendee) {
+                            // Save ticket async
+                            AsyncTaskService.runAsync(
+                                    () -> {
+                                        Ticket newTicket = new Ticket();
+                                        newTicket.setId(UUID.randomUUID());
+                                        newTicket.setAttendeeId(attendee.getId());
+                                        newTicket.setEventId(selectedTemplate.getEventId());
+                                        newTicket.setType(selectedTemplate.getType());
+                                        newTicket.setPrice(selectedTemplate.getPrice());
+                                        newTicket.setTicketStatus(TicketStatus.ACTIVE);
+                                        newTicket.setPaymentStatus(PaymentStatus.PAID);
+                                        newTicket.setQrCodeData("QR-" + newTicket.getId().toString().substring(0, 12).toUpperCase());
+
+                                        if (appContext.ticketRepo != null) {
+                                            appContext.ticketRepo.save(newTicket);
+                                        }
+                                        return newTicket;
+                                    },
+                                    newTicket -> {
+                                        showQRCodeDialog(newTicket, selected.name);
+                                        loadEventsPageAsync(currentPage, null);
+                                    },
+                                    error -> showAlert("Error", "Failed to save ticket: " + error.getMessage())
+                            );
+                        }
+                    }
+
+                    System.out.println("  ✓ onBuyTicket() completed in " + (System.currentTimeMillis() - buyStart) + " ms");
+                },
+                error -> showAlert("Error", "Error loading tickets: " + error.getMessage())
+        );
     }
 
     private void showQRCodeDialog(Ticket ticket, String eventName) {
@@ -511,58 +716,103 @@ public class ViewEventsController {
 
     @FXML
     public void onViewSessions() {
+        long sessStart = System.currentTimeMillis();
+        System.out.println("🎤 [ViewEvents] onViewSessions() starting...");
+
         EventRow selected = eventsTable.getSelectionModel().getSelectedItem();
         if (selected == null) {
             showAlert("Warning", "Please select an event");
             return;
         }
 
-        try {
-            List<Session> sessions = sessionCache.getOrDefault(selected.eventId, new ArrayList<>());
+        // Load sessions async to prevent UI freeze
+        AsyncTaskService.runAsync(
+                () -> {
+                    long loadStart = System.currentTimeMillis();
+                    try {
+                        List<Session> sessions = sessionCache.getOrDefault(selected.eventId, new ArrayList<>());
 
-            if (sessions.isEmpty() && sessionRepo != null) {
-                sessions = sessionRepo.findByEvent(selected.eventId);
-                sessionCache.put(selected.eventId, sessions);
-            }
+                        if (sessions.isEmpty() && sessionRepo != null) {
+                            long queryStart = System.currentTimeMillis();
+                            sessions = sessionRepo.findByEvent(selected.eventId);
+                            System.out.println("  ✓ sessionRepo.findByEvent() took " + (System.currentTimeMillis() - queryStart) + " ms");
+                            sessionCache.put(selected.eventId, sessions);
+                        }
 
-            if (sessions.isEmpty()) {
-                showAlert("Info", "No sessions found");
-                return;
-            }
+                        if (sessions.isEmpty()) {
+                            return "No sessions found";
+                        }
 
-            StringBuilder sessionInfo = new StringBuilder("Sessions for " + selected.name + ":\n\n");
-            for (Session session : sessions) {
-                sessionInfo.append("• ").append(session.getTitle()).append("\n");
-                sessionInfo.append("  Time: ").append(session.getStart()).append(" - ").append(session.getEnd()).append("\n");
-                sessionInfo.append("  Venue: ").append(session.getVenue()).append("\n");
-                sessionInfo.append("  Capacity: ").append(session.getCapacity()).append("\n");
-
-                if (presenterRepo != null && session.getPresenterIds() != null && !session.getPresenterIds().isEmpty()) {
-                    sessionInfo.append("  Presenters: ");
-                    List<String> names = new ArrayList<>();
-                    for (UUID pid : session.getPresenterIds()) {
-                        Presenter p = presenterCache.get(pid);
-                        if (p == null) {
-                            try {
-                                p = presenterRepo.findById(pid);
-                                if (p != null) presenterCache.put(pid, p);
-                            } catch (Exception ex) {
-                                System.err.println("Error loading presenter: " + ex.getMessage());
+                        // OPTIMIZED: Batch load all missing presenters at once
+                        long presStart = System.currentTimeMillis();
+                        Set<UUID> presenterIds = new HashSet<>();
+                        for (Session session : sessions) {
+                            if (session.getPresenterIds() != null) {
+                                for (UUID pid : session.getPresenterIds()) {
+                                    if (!presenterCache.containsKey(pid)) {
+                                        presenterIds.add(pid);
+                                    }
+                                }
                             }
                         }
-                        if (p != null) names.add(p.getFullName());
-                    }
-                    sessionInfo.append(names.isEmpty() ? "No presenters" : String.join(", ", names)).append("\n");
-                } else {
-                    sessionInfo.append("  Presenters: None\n");
-                }
-                sessionInfo.append("\n");
-            }
 
-            showAlert("Sessions", sessionInfo.toString());
-        } catch (Exception e) {
-            showAlert("Error", "Error loading sessions: " + e.getMessage());
-        }
+                        // Load missing presenters
+                        if (!presenterIds.isEmpty() && presenterRepo != null) {
+                            for (UUID pid : presenterIds) {
+                                try {
+                                    Presenter p = presenterRepo.findById(pid);
+                                    if (p != null) {
+                                        presenterCache.put(pid, p);
+                                    }
+                                } catch (Exception ignored) {}
+                            }
+                            System.out.println("  ✓ Batch loaded " + presenterIds.size() + " presenters in " + (System.currentTimeMillis() - presStart) + " ms");
+                        }
+
+                        // Build display string with cached presenters
+                        StringBuilder sessionInfo = new StringBuilder("Sessions for " + selected.name + ":\n\n");
+                        for (Session session : sessions) {
+                            sessionInfo.append("• ").append(session.getTitle()).append("\n");
+                            sessionInfo.append("  Time: ").append(session.getStart()).append(" - ").append(session.getEnd()).append("\n");
+                            sessionInfo.append("  Venue: ").append(session.getVenue()).append("\n");
+                            sessionInfo.append("  Capacity: ").append(session.getCapacity()).append("\n");
+
+                            if (session.getPresenterIds() != null && !session.getPresenterIds().isEmpty()) {
+                                sessionInfo.append("  Presenters: ");
+                                List<String> names = new ArrayList<>();
+                                for (UUID pid : session.getPresenterIds()) {
+                                    Presenter p = presenterCache.get(pid);
+                                    if (p != null) {
+                                        names.add(p.getFullName());
+                                    }
+                                }
+                                sessionInfo.append(names.isEmpty() ? "No presenters" : String.join(", ", names)).append("\n");
+                            } else {
+                                sessionInfo.append("  Presenters: None\n");
+                            }
+                            sessionInfo.append("\n");
+                        }
+
+                        System.out.println("  ✓ onViewSessions() prepared in " + (System.currentTimeMillis() - loadStart) + " ms");
+                        return sessionInfo.toString();
+                    } catch (Exception e) {
+                        System.err.println("  ✗ Error loading sessions: " + e.getMessage());
+                        return "Error: " + e.getMessage();
+                    }
+                },
+                sessionInfo -> {
+                    if (sessionInfo.startsWith("Error")) {
+                        showAlert("Error", sessionInfo);
+                    } else {
+                        showAlert("Sessions", sessionInfo);
+                    }
+                    System.out.println("  ✓ onViewSessions() completed in " + (System.currentTimeMillis() - sessStart) + " ms");
+                },
+                error -> {
+                    showAlert("Error", "Error loading sessions: " + error.getMessage());
+                    System.err.println("  ✗ onViewSessions() failed: " + error.getMessage());
+                }
+        );
     }
 
     @FXML
