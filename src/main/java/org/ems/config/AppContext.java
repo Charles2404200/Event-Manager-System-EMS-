@@ -6,13 +6,16 @@ import org.ems.application.impl.ImageServiceImpl;
 import org.ems.application.impl.ReportingServiceImpl;
 import org.ems.application.impl.ScheduleServiceImpl;
 import org.ems.application.impl.TicketServiceImpl;
+import org.ems.application.impl.PresenterStatisticsServiceImpl;
 
 import org.ems.application.service.EventService;
 import org.ems.application.service.IdentityService;
-import org.ems.application.service.ImageService;
+import org.ems.application.service.ImageUploadService;
 import org.ems.application.service.ReportingService;
 import org.ems.application.service.ScheduleService;
 import org.ems.application.service.TicketService;
+import org.ems.application.service.PresenterStatisticsService;
+import org.ems.application.service.ImageService;
 
 import org.ems.infrastructure.repository.jdbc.*;
 
@@ -38,7 +41,7 @@ public class AppContext {
     public final TicketRepository ticketRepo;
     public final UserRepository userRepo;
     public final ActivityLogRepository activityLogRepo;
-
+    public final PresenterStatisticsService presenterStatsService;
     // Services
     public final IdentityService identityService;
     public final EventService eventService;
@@ -121,6 +124,9 @@ public class AppContext {
                 attendeeRepo,
                 ticketRepo
         ) : null;
+        this.presenterStatsService = connection != null
+                ? new PresenterStatisticsServiceImpl(connection)
+                : null;
 
         System.out.println(" AppContext initialized successfully.");
 
@@ -151,6 +157,7 @@ public class AppContext {
         DatabaseConfig.closePool();
         System.out.println(" AppContext shutdown completed");
     }
+
 
     // ============================================================
     //  Connection Pool Monitoring
