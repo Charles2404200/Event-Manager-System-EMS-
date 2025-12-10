@@ -15,6 +15,14 @@
         <VBox style="-fx-background-color: #2c3e50; -fx-padding: 15;" spacing="10">
             <Label text="Manage Sessions" style="-fx-font-size: 24; -fx-font-weight: bold; -fx-text-fill: white;"/>
             <Label text="Create, edit, and manage event sessions" style="-fx-font-size: 12; -fx-text-fill: #ecf0f1;"/>
+
+            <!-- Loading Progress Bar -->
+            <VBox spacing="5" style="-fx-padding: 10; -fx-background-color: #34495e; -fx-border-radius: 5;" visible="false" fx:id="loadingContainer">
+                <HBox spacing="10" alignment="CENTER_LEFT">
+                    <ProgressBar fx:id="loadingProgressBar" prefWidth="300" visible="false" style="-fx-padding: 2;"/>
+                    <Label fx:id="loadingStatusLabel" text="Loading..." style="-fx-text-fill: white; -fx-font-size: 12;" visible="false"/>
+                </HBox>
+            </VBox>
         </VBox>
     </top>
 

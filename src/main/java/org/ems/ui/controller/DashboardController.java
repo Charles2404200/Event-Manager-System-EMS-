@@ -29,6 +29,7 @@ public class DashboardController {
     @FXML private Label userNameLabel;
     @FXML private Label userRoleLabel;
     @FXML private Label userEmailLabel;
+    @FXML private Label nOAssignedSessions;
 
     // Role-specific sections
     @FXML private VBox attendeeSection;
@@ -72,10 +73,12 @@ public class DashboardController {
      * Load dynamic content based on user role - asynchronously
      */
     private void loadDynamicContentAsync() {
+        long dashStart = System.currentTimeMillis();
+        System.out.println("📊 [Dashboard] loadDynamicContentAsync() starting...");
+
         // Get the primary stage safely
         javafx.stage.Stage primaryStage = null;
         try {
-            // Try to get stage from root element if available
             if (attendeeSection != null && attendeeSection.getScene() != null) {
                 primaryStage = (javafx.stage.Stage) attendeeSection.getScene().getWindow();
             }
@@ -92,19 +95,25 @@ public class DashboardController {
         AsyncTaskService.runAsync(
                 // Background task
                 () -> {
+                    long taskStart = System.currentTimeMillis();
+                    System.out.println("  🔄 [Background] Loading content for role: " + userRole);
                     try {
                         switch (userRole) {
                             case ATTENDEE:
                                 loadAttendeeContent();
+                                System.out.println("  ✓ Attendee content loaded in " + (System.currentTimeMillis() - taskStart) + " ms");
                                 break;
                             case PRESENTER:
                                 loadPresenterContent();
+                                System.out.println("  ✓ Presenter content loaded in " + (System.currentTimeMillis() - taskStart) + " ms");
                                 break;
                             case EVENT_ADMIN:
                                 loadEventAdminContent();
+                                System.out.println("  ✓ Event admin content loaded in " + (System.currentTimeMillis() - taskStart) + " ms");
                                 break;
                             case SYSTEM_ADMIN:
                                 // No dynamic content needed for now
+                                System.out.println("  ✓ System admin - no dynamic content");
                                 break;
                         }
                     } catch (Exception e) {
@@ -119,7 +128,7 @@ public class DashboardController {
                     if (loadingDialog != null) {
                         loadingDialog.close();
                     }
-                    System.out.println("✓ Dashboard loaded successfully");
+                    System.out.println("✓ Dashboard loaded successfully in " + (System.currentTimeMillis() - dashStart) + " ms");
                 },
 
                 // Error callback
@@ -133,51 +142,88 @@ public class DashboardController {
     }
 
     /**
-     * Load attendee's upcoming events and tickets
+     * Load attendee's upcoming events and tickets - OPTIMIZED: Batch load, single pass
      */
     private void loadAttendeeContent() {
+        long contentStart = System.currentTimeMillis();
         try {
-            if (currentUser instanceof Attendee && appContext.ticketRepo != null && appContext.eventRepo != null) {
-                Attendee attendee = (Attendee) currentUser;
+            if (!(currentUser instanceof Attendee) || appContext.ticketRepo == null || appContext.eventRepo == null) {
+                System.out.println("  ⚠️ Missing attendee context");
+                return;
+            }
 
-                // Get all tickets for this attendee
-                List<Ticket> tickets = appContext.ticketRepo.findByAttendee(attendee.getId());
+            Attendee attendee = (Attendee) currentUser;
+            VBox upcomingEventsBox = findVBoxByTitle(attendeeSection, "Your Upcoming Events");
+            if (upcomingEventsBox == null) {
+                System.out.println("  ⚠️ upcomingEventsBox not found");
+                return;
+            }
 
-                // Find the "Your Upcoming Events" section in attendeeSection
-                if (attendeeSection != null) {
-                    VBox upcomingEventsBox = findVBoxByTitle(attendeeSection, "Your Upcoming Events");
-                    if (upcomingEventsBox != null) {
-                        if (tickets.isEmpty()) {
-                            // No tickets, show message
-                            Platform.runLater(() -> updateUpcomingEventsDisplay(upcomingEventsBox, null));
-                        } else {
-                            // Get event and session details
-                            List<Event> allEvents = appContext.eventRepo.findAll();
+            // BATCH LOAD: Get all data in 3 queries (not nested)
+            long batchStart = System.currentTimeMillis();
+            List<Ticket> tickets = appContext.ticketRepo.findByAttendee(attendee.getId());
+            long ticketTime = System.currentTimeMillis() - batchStart;
+            System.out.println("  ✓ Tickets loaded in " + ticketTime + " ms: " + tickets.size());
 
-                            // Filter only upcoming events (start date in future)
-                            List<Event> upcomingEvents = new java.util.ArrayList<>();
-                            java.time.LocalDate today = java.time.LocalDate.now();
+            if (tickets.isEmpty()) {
+                Platform.runLater(() -> {
+                    Label noEventsLabel = new Label("No upcoming events - Browse and register for events to see them here");
+                    noEventsLabel.setStyle("-fx-font-size: 12; -fx-text-fill: #999;");
+                    upcomingEventsBox.getChildren().clear();
+                    upcomingEventsBox.getChildren().add(noEventsLabel);
+                });
+                System.out.println("  ✓ No tickets, UI updated");
+                return;
+            }
 
-                            for (Event event : allEvents) {
-                                // Check if attendee has ticket for this event
-                                boolean hasTicket = tickets.stream()
-                                    .anyMatch(t -> t.getEventId().equals(event.getId()));
+            // Load all events ONCE
+            long eventsStart = System.currentTimeMillis();
+            List<Event> allEvents = appContext.eventRepo.findAll();
+            long eventsTime = System.currentTimeMillis() - eventsStart;
+            System.out.println("  ✓ All events loaded in " + eventsTime + " ms: " + allEvents.size());
 
-                                // Check if event is in future
-                                if (hasTicket && event.getStartDate() != null) {
-                                    java.time.LocalDate eventStart = event.getStartDate();
-                                    if (eventStart.isAfter(today)) {
-                                        upcomingEvents.add(event);
-                                    }
-                                }
-                            }
+            // OPTIMIZED: Single pass - collect upcoming events in-memory
+            long filterStart = System.currentTimeMillis();
+            java.time.LocalDate today = java.time.LocalDate.now();
 
-                            // Update UI on FX Application Thread
-                            Platform.runLater(() -> updateUpcomingEventsDisplay(upcomingEventsBox, upcomingEvents));
-                        }
+            // Create eventId -> Event map for O(1) lookup
+            java.util.Map<java.util.UUID, Event> eventMap = new java.util.HashMap<>();
+            for (Event event : allEvents) {
+                eventMap.put(event.getId(), event);
+            }
+
+            // Filter upcoming events
+            List<Event> upcomingEvents = new java.util.ArrayList<>();
+            java.util.Set<java.util.UUID> ticketedEventIds = new java.util.HashSet<>();
+
+            for (Ticket ticket : tickets) {
+                if (ticket.getEventId() != null && !ticketedEventIds.contains(ticket.getEventId())) {
+                    Event event = eventMap.get(ticket.getEventId());
+                    if (event != null && event.getStartDate() != null && event.getStartDate().isAfter(today)) {
+                        upcomingEvents.add(event);
+                        ticketedEventIds.add(event.getId());
                     }
                 }
             }
+
+            long filterTime = System.currentTimeMillis() - filterStart;
+            System.out.println("  ✓ Filtered to " + upcomingEvents.size() + " upcoming events in " + filterTime + " ms");
+
+            // Sort by date
+            upcomingEvents.sort((e1, e2) -> {
+                if (e1.getStartDate() == null || e2.getStartDate() == null) return 0;
+                return e1.getStartDate().compareTo(e2.getStartDate());
+            });
+
+            // Update UI on FX thread
+            Platform.runLater(() -> {
+                long uiStart = System.currentTimeMillis();
+                updateUpcomingEventsDisplay(upcomingEventsBox, upcomingEvents);
+                System.out.println("  ✓ UI updated in " + (System.currentTimeMillis() - uiStart) + " ms");
+            });
+
+            System.out.println("  ✓ loadAttendeeContent completed in " + (System.currentTimeMillis() - contentStart) + " ms");
+
         } catch (Exception e) {
             System.err.println("Error loading attendee content: " + e.getMessage());
             e.printStackTrace();
@@ -192,12 +238,22 @@ public class DashboardController {
         try {
             if (currentUser instanceof Presenter && appContext.sessionRepo != null) {
                 Presenter presenter = (Presenter) currentUser;
-                List<Session> sessions = appContext.sessionRepo.findAll();
+
+                long finalTotalAssigned = appContext.sessionRepo.countByPresenter(presenter.getId());
+
+                Platform.runLater(() -> {
+                    if (nOAssignedSessions != null) {
+                        nOAssignedSessions.setText(String.valueOf(finalTotalAssigned));
+                    }
+                });
+
+                System.out.println("Presenter " + presenter.getFullName()
+                        + " has " + finalTotalAssigned + " assigned sessions.");
+
 
                 // Filter sessions assigned to this presenter
                 // Note: This requires checking presenter_session mapping table
                 // For now, we'll display info
-                System.out.println("Presenter sessions count: " + sessions.size());
             }
         } catch (Exception e) {
             System.err.println("Error loading presenter content: " + e.getMessage());
@@ -273,7 +329,7 @@ public class DashboardController {
     }
 
     /**
-     * Create a display box for an upcoming event with its sessions
+     * Create a display box for an upcoming event - OPTIMIZED: No DB queries, just display
      */
     private HBox createUpcomingEventDisplayBox(Event event) {
         HBox box = new HBox(15);
@@ -300,82 +356,6 @@ public class DashboardController {
 
         infoBox.getChildren().addAll(eventLabel, typeLabel, dateLabel, locationLabel, statusLabel);
 
-        // Load and display sessions for this event that attendee has tickets for
-        try {
-            if (appContext.sessionRepo != null && appContext.ticketRepo != null && appContext.eventRepo != null && currentUser instanceof Attendee) {
-                Attendee attendee = (Attendee) currentUser;
-
-                // Get all events
-                List<Event> allEvents = appContext.eventRepo.findAll();
-
-                // Get all sessions for this event
-                List<Session> allSessions = appContext.sessionRepo.findByEvent(event.getId());
-
-                // Get all tickets for attendee
-                List<Ticket> attendeeTickets = appContext.ticketRepo.findByAttendee(attendee.getId());
-
-                // Note: Tickets are now event-level only, not session-specific
-                // Session registrations are done separately after buying ticket
-                // For now, show the events user has tickets for
-                List<Event> ticketedEvents = new java.util.ArrayList<>();
-                for (Ticket ticket : attendeeTickets) {
-                    if (ticket.getEventId() != null) {
-                        Event evt = allEvents.stream()
-                            .filter(e -> e.getId().equals(ticket.getEventId()))
-                            .findFirst()
-                            .orElse(null);
-                        if (evt != null && !ticketedEvents.contains(evt)) {
-                            ticketedEvents.add(evt);
-                        }
-                    }
-                }
-
-                if (!ticketedEvents.isEmpty()) {
-                    Label eventsLabel = new Label("Events You Have Tickets For:");
-                    eventsLabel.setStyle("-fx-font-size: 11; -fx-font-weight: bold; -fx-text-fill: #2c3e50; -fx-padding: 10 0 5 0;");
-                    infoBox.getChildren().add(eventsLabel);
-
-                    // Sort events by start date
-                    ticketedEvents.sort((e1, e2) -> {
-                        if (e1.getStartDate() == null || e2.getStartDate() == null) return 0;
-                        return e1.getStartDate().compareTo(e2.getStartDate());
-                    });
-
-                    // Display first 3 events (to avoid too much content)
-                    int count = 0;
-                    for (Event ticketedEvent : ticketedEvents) {
-                        if (count >= 3) {
-                            Label moreLabel = new Label("  ... and " + (ticketedEvents.size() - 3) + " more event(s)");
-                            moreLabel.setStyle("-fx-font-size: 10; -fx-text-fill: #999;");
-                            infoBox.getChildren().add(moreLabel);
-                            break;
-                        }
-
-                        // Event info
-                        String eventInfo = "  • " + (ticketedEvent.getName() != null ? ticketedEvent.getName() : "Unknown") +
-                                " (" + (ticketedEvent.getStartDate() != null ? ticketedEvent.getStartDate() : "N/A") + ")";
-                        Label ticketedEventLabel = new Label(eventInfo);
-                        ticketedEventLabel.setStyle("-fx-font-size: 10; -fx-text-fill: #555;");
-                        infoBox.getChildren().add(ticketedEventLabel);
-
-                        // Location info
-                        if (ticketedEvent.getLocation() != null) {
-                            Label ticketedLocationLabel = new Label("    Location: " + ticketedEvent.getLocation());
-                            ticketedLocationLabel.setStyle("-fx-font-size: 10; -fx-text-fill: #888;");
-                            infoBox.getChildren().add(ticketedLocationLabel);
-                        }
-
-                        count++;
-                    }
-                } else {
-                    Label noSessionsLabel = new Label("(No registered sessions for this event)");
-                    noSessionsLabel.setStyle("-fx-font-size: 10; -fx-text-fill: #999;");
-                    infoBox.getChildren().add(noSessionsLabel);
-                }
-            }
-        } catch (Exception e) {
-            System.err.println("Error loading sessions for event: " + e.getMessage());
-        }
 
         // Add Register Sessions button
         VBox actionBox = new VBox(8);
@@ -486,6 +466,8 @@ public class DashboardController {
     public void onViewAssignedSessions() {
         // TODO: View presenter's assigned sessions
         System.out.println("View Assigned Sessions clicked");
+
+        SceneManager.switchTo("presenter_assigned_sessions.fxml", "My assigned sessions");
     }
 
     @FXML
@@ -505,6 +487,10 @@ public class DashboardController {
     public void onExportPresenterSummary() {
         // TODO: Export presenter activity summary
         System.out.println("Export Summary clicked");
+        SceneManager.switchTo(
+                "presenter_activity_export.fxml",
+                "Export Presenter Activity Summary"
+        );
     }
 
     @FXML
@@ -585,6 +571,12 @@ public class DashboardController {
     public void onUpdateProfile() {
         // TODO: Update user profile (generic for all roles)
         System.out.println("Update Profile clicked");
+
+        if (appContext.currentUser instanceof Presenter) {
+            SceneManager.switchTo("presenter_profile.fxml", "Update Profile");
+        }
+
+
     }
 
     @FXML

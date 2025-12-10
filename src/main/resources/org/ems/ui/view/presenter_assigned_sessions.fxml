@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<BorderPane xmlns="http://javafx.com/javafx"
+            xmlns:fx="http://javafx.com/fxml"
+            fx:controller="org.ems.ui.controller.AssignedSessionsController"
+            prefWidth="1200" prefHeight="700"
+            style="-fx-background-color: linear-gradient(to bottom, #f5f7fa, #e4ebf5);">
+
+    <!-- HEADER -->
+    <top>
+        <VBox spacing="5" style="-fx-padding: 15 20 10 20;">
+            <Label text="My Assigned Sessions"
+                   style="-fx-font-size: 22; -fx-font-weight: bold; -fx-text-fill: #2c3e50;"/>
+
+            <Label fx:id="errorLabel"
+                   textFill="#e74c3c"
+                   style="-fx-font-size: 12;"/>
+        </VBox>
+    </top>
+
+    <center>
+        <HBox spacing="15" style="-fx-padding: 0 20 10 20;">
+            <!-- LEFT: Assigned Sessions List -->
+            <VBox spacing="10" HBox.hgrow="ALWAYS">
+                <Label text="Sessions List"
+                       style="-fx-font-size: 14; -fx-font-weight: bold; -fx-text-fill: #34495e;"/>
+
+                <BorderPane style="-fx-background-color: white;
+                                   -fx-background-radius: 8;
+                                   -fx-border-radius: 8;
+                                   -fx-border-color: #dde1e7;
+                                   -fx-border-width: 1;">
+                    <center>
+                        <ListView fx:id="assignedSessionsListView"
+                                  prefHeight="500"
+                                  style="-fx-background-color: transparent;
+                                         -fx-padding: 5;"/>
+                    </center>
+                </BorderPane>
+            </VBox>
+
+            <!-- RIGHT: Session Details -->
+            <VBox spacing="10" prefWidth="380">
+                <Label text="Session Details"
+                       style="-fx-font-size: 14; -fx-font-weight: bold; -fx-text-fill: #34495e;"/>
+
+                <BorderPane style="-fx-background-color: white;
+                                   -fx-background-radius: 8;
+                                   -fx-border-radius: 8;
+                                   -fx-border-color: #dde1e7;
+                                   -fx-border-width: 1;">
+                    <center>
+                        <VBox spacing="8" style="-fx-padding: 15;">
+                            <!-- ID -->
+                            <Label text="ID:"
+                                   style="-fx-font-size: 12; -fx-font-weight: bold;"/>
+                            <Label fx:id="detailIdLabel"
+                                   style="-fx-font-size: 12; -fx-text-fill: #2c3e50;"/>
+
+                            <!-- Title -->
+                            <Label text="Title:"
+                                   style="-fx-font-size: 12; -fx-font-weight: bold; -fx-padding: 8 0 0 0;"/>
+                            <Label fx:id="detailTitleLabel"
+                                   wrapText="true"
+                                   style="-fx-font-size: 12; -fx-text-fill: #2c3e50;"/>
+
+                            <!-- Description (optional, nếu Session có) -->
+                            <Label text="Description:"
+                                   style="-fx-font-size: 12; -fx-font-weight: bold; -fx-padding: 8 0 0 0;"/>
+                            <Label fx:id="detailDescriptionLabel"
+                                   wrapText="true"
+                                   style="-fx-font-size: 12; -fx-text-fill: #2c3e50;"/>
+
+                            <!-- Start -->
+                            <Label text="Start:"
+                                   style="-fx-font-size: 12; -fx-font-weight: bold; -fx-padding: 8 0 0 0;"/>
+                            <Label fx:id="detailStartLabel"
+                                   style="-fx-font-size: 12; -fx-text-fill: #2c3e50;"/>
+
+                            <!-- End -->
+                            <Label text="End:"
+                                   style="-fx-font-size: 12; -fx-font-weight: bold; -fx-padding: 8 0 0 0;"/>
+                            <Label fx:id="detailEndLabel"
+                                   style="-fx-font-size: 12; -fx-text-fill: #2c3e50;"/>
+
+                            <!-- Venue -->
+                            <Label text="Venue:"
+                                   style="-fx-font-size: 12; -fx-font-weight: bold; -fx-padding: 8 0 0 0;"/>
+                            <Label fx:id="detailVenueLabel"
+                                   wrapText="true"
+                                   style="-fx-font-size: 12; -fx-text-fill: #2c3e50;"/>
+
+                            <!-- Capacity -->
+                            <Label text="Capacity:"
+                                   style="-fx-font-size: 12; -fx-font-weight: bold; -fx-padding: 8 0 0 0;"/>
+                            <Label fx:id="detailCapacityLabel"
+                                   style="-fx-font-size: 12; -fx-text-fill: #2c3e50;"/>
+
+                        </VBox>
+                    </center>
+                </BorderPane>
+            </VBox>
+        </HBox>
+    </center>
+
+    <!-- FOOTER: Pagination + Back -->
+    <bottom>
+        <HBox spacing="10"
+              style="-fx-padding: 10 20 15 20;"
+              alignment="CENTER_RIGHT">
+
+            <HBox spacing="10" alignment="CENTER_LEFT" HBox.hgrow="ALWAYS">
+                <Label fx:id="pageLabel"
+                       text="Page 1"
+                       style="-fx-font-size: 12; -fx-text-fill: #555555;"/>
+            </HBox>
+
+            <!-- Prev / Next -->
+            <Button fx:id="prevButton"
+                    text="Prev"
+                    mnemonicParsing="false"
+                    style="-fx-background-radius: 18;
+                           -fx-padding: 5 16;
+                           -fx-font-size: 12;"/>
+
+            <Button fx:id="nextButton"
+                    text="Next"
+                    mnemonicParsing="false"
+                    style="-fx-background-radius: 18;
+                           -fx-padding: 5 16;
+                           -fx-font-size: 12;"/>
+
+            <!-- Back button -->
+            <Button text="Back to Dashboard"
+                    onAction="#onBack"
+                    mnemonicParsing="false"
+                    style="-fx-background-color: #4a90e2;
+                           -fx-text-fill: white;
+                           -fx-background-radius: 20;
+                           -fx-padding: 6 20;
+                           -fx-font-size: 13;
+                           -fx-font-weight: bold;"/>
+        </HBox>
+    </bottom>
+
+</BorderPane>

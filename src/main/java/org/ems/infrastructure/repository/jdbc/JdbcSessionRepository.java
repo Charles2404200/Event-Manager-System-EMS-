@@ -318,6 +318,41 @@ public class JdbcSessionRepository implements SessionRepository {
         }
     }
 
+    @Override
+    public List<Session> findByPresenter(UUID presenterId, int offset, int limit) {
+
+        List<Session> list = new ArrayList<>();
+
+        String sql = """
+            SELECT DISTINCT s.*
+            FROM sessions s
+            JOIN presenter_session ps ON ps.session_id = s.id
+            WHERE ps.presenter_id = ?
+            ORDER BY s.start_time
+            LIMIT ? OFFSET ?
+        """;
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            ps.setObject(1, presenterId);
+            ps.setInt(2, limit);
+            ps.setInt(3, offset);
+
+            ResultSet rs = ps.executeQuery();
+
+            while (rs.next()) {
+                Session s = mapRow(rs);
+                loadPresenterIds(s);
+                list.add(s);
+            }
+
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+
+        return list;
+    }
+
 
     // -------------------------------------------------------
     // CLEAR PRESENTERS
@@ -335,6 +370,29 @@ public class JdbcSessionRepository implements SessionRepository {
             throw new RuntimeException(e);
         }
     }
+
+    @Override
+    public long countByPresenter(UUID presenterId) {
+
+        final String sql = """
+        SELECT COUNT(*) 
+        FROM presenter_session 
+        WHERE presenter_id = ?
+        """;
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setObject(1, presenterId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getLong(1);
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to count sessions for presenter " + presenterId, e);
+        }
+        return 0L;
+    }
+
 
     // -------------------------------------------------------
     // SAVE Presenter Links (called inside save())

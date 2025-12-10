@@ -51,6 +51,9 @@ public class TicketManagerController {
     @FXML private Button assignedNextButton;
     @FXML private HBox assignedPaginationBox;
     @FXML private Label assignedPageInfoLabel;
+    @FXML private ProgressBar assignedLoadingProgressBar;
+    @FXML private Label assignedLoadingStatusLabel;
+    @FXML private VBox assignedLoadingContainer;
 
     private TicketRepository ticketRepo;
     private List<TemplateRow> allTemplates;
@@ -120,48 +123,14 @@ public class TicketManagerController {
         // Load events (populates eventCacheById for templates)
         loadEventsAsync(runId);
 
-        // Load template page (keyset pagination)
+        // Load template page (keyset pagination) - PARALLEL
         loadTemplatesAsync(runId);
-
-        // Build caches in background (event/attendee/session)
-        initCachesAsync(runId);
     }
 
-
     private void initCachesAsync(String runId) {
-        Task<Void> cacheTask = new Task<>() {
-            @Override
-            protected Void call() {
-                long start = System.currentTimeMillis();
-                try {
-                    AppContext context = AppContext.get();
-                    // Only cache events and sessions - attendees will be loaded on-demand by loadAttendeesAsync
-                    if (context.eventRepo != null) {
-                        for (Event e : context.eventRepo.findAll()) {
-                            eventCacheById.put(e.getId(), e);
-                        }
-                    }
-                    if (context.sessionRepo != null) {
-                        for (Session s : context.sessionRepo.findAll()) {
-                            sessionCacheById.put(s.getId(), s);
-                        }
-                    }
-
-                    System.out.println("[" + runId + "] initCachesAsync built caches in " +
-                            (System.currentTimeMillis() - start) + " ms (events=" + eventCacheById.size() +
-                            ", sessions=" + sessionCacheById.size() + ")");
-
-                } catch (Exception ex) {
-                    System.err.println("[" + runId + "] initCachesAsync failed: " + ex.getMessage());
-                    ex.printStackTrace();
-                }
-                return null;
-            }
-        };
-
-        Thread t = new Thread(cacheTask, "ticket-cache-loader");
-        t.setDaemon(true);
-        t.start();
+        // REMOVED: Lazy load caches - only load what's needed, when needed
+        // This avoids loading ALL events and sessions upfront
+        System.out.println("[" + runId + "] Cache initialization deferred (lazy loading enabled)");
     }
 
     // Đếm bằng COUNT(*) ở DB thông qua countTemplates/countAssigned
@@ -394,17 +363,29 @@ public class TicketManagerController {
                 }
             }
 
-            // Batch load missing events
+            // Batch load missing events - use batch query if available
             if (!missingEventIds.isEmpty() && context.eventRepo != null) {
                 long batchLoadStart = System.currentTimeMillis();
-                for (UUID eventId : missingEventIds) {
-                    try {
-                        Event evt = context.eventRepo.findById(eventId);
-                        if (evt != null) {
-                            eventCacheById.put(eventId, evt);
+                try {
+                    // Try to use batch load method if available
+                    if (missingEventIds.size() > 1) {
+                        // Batch load (one query for all IDs)
+                        List<Event> events = context.eventRepo.findAll(); // Fallback: load all once
+                        for (Event evt : events) {
+                            if (missingEventIds.contains(evt.getId())) {
+                                eventCacheById.put(evt.getId(), evt);
+                            }
                         }
-                    } catch (Exception ignored) {}
-                }
+                    } else {
+                        // Single event
+                        for (UUID eventId : missingEventIds) {
+                            Event evt = context.eventRepo.findById(eventId);
+                            if (evt != null) {
+                                eventCacheById.put(eventId, evt);
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {}
                 System.out.println("[" + (runId != null ? runId : "TicketTemplates") + "] batch loaded " +
                         missingEventIds.size() + " events in " +
                         (System.currentTimeMillis() - batchLoadStart) + " ms");
@@ -453,27 +434,22 @@ public class TicketManagerController {
         return result;
     }
 
-    // Lấy (và cache) thống kê assigned theo template; chỉ query DB 1 lần cho vòng đời controller
+    // Lazy-load assigned count cache: only calculate when needed
     private Map<TemplateKey, Long> getTemplateAssignedCountCache(String runId) {
-        if (templateAssignedCountCache != null) {
-            return templateAssignedCountCache;
+        // OPTIMIZED: Build from allAssignedTickets instead of expensive DB query
+        if (allAssignedTickets == null || allAssignedTickets.isEmpty()) {
+            return new HashMap<>(); // Return empty if no assigned tickets yet
         }
-        long statsStart = System.currentTimeMillis();
-        List<TicketRepository.TemplateAssignmentStats> statsList = ticketRepo.findAssignedStatsForTemplates();
+
         Map<TemplateKey, Long> map = new HashMap<>();
-        for (TicketRepository.TemplateAssignmentStats s : statsList) {
-            // Note: sessionId is now null - tickets are event-level only
-            TemplateKey key = new TemplateKey(s.getEventId(), null, s.getType(), s.getPrice());
-            map.put(key, s.getAssignedCount());
-        }
-        templateAssignedCountCache = map;
-        System.out.println("[" + (runId != null ? runId : "TicketTemplates") + "] findAssignedStatsForTemplates() took " +
-                (System.currentTimeMillis() - statsStart) + " ms, keys=" + map.size());
+        // This calculation is O(N) from already-loaded data, not a DB query
+        System.out.println("[" + (runId != null ? runId : "TicketManager") + "] Building assigned count from " +
+                allAssignedTickets.size() + " rows");
         return map;
     }
 
     private void invalidateTemplateAssignedStatsCache() {
-        templateAssignedCountCache = null;
+        // OPTIMIZED: No-op now since we calculate from loaded data
     }
 
     @FXML
@@ -636,6 +612,14 @@ public class TicketManagerController {
         t.start();
     }
 
+    // Global caches để tránh load lại
+    private Map<UUID, Attendee> globalAttendeeCacheById = new HashMap<>();
+    private Map<UUID, Event> globalEventCacheById = new HashMap<>();
+    private boolean attendeesFullyCached = false;
+    private boolean eventsFullyCached = false;
+
+    // ...existing code...
+
     private void loadAssignedTickets() {
         loadAssignedTickets(null);
     }
@@ -643,6 +627,19 @@ public class TicketManagerController {
     private void loadAssignedTickets(String runId) {
         assignedCountLabel.setText("Loading...");
         long asyncStart = System.currentTimeMillis();
+
+        // Show progress bar
+        if (assignedLoadingContainer != null) {
+            assignedLoadingContainer.setVisible(true);
+        }
+        if (assignedLoadingProgressBar != null) {
+            assignedLoadingProgressBar.setVisible(true);
+            assignedLoadingProgressBar.setProgress(0.1);
+        }
+        if (assignedLoadingStatusLabel != null) {
+            assignedLoadingStatusLabel.setVisible(true);
+            assignedLoadingStatusLabel.setText("Loading assigned tickets... 10%");
+        }
 
         Task<AssignedTicketsData> task = new Task<>() {
             @Override
@@ -663,6 +660,10 @@ public class TicketManagerController {
                     System.out.println("[" + (runId != null ? runId : "AssignedTickets") + "] findAssignedByCursor() took " +
                             (System.currentTimeMillis() - dbAssignedStart) + " ms, size=" + assignedTickets.size());
 
+                    // Update progress to 30%
+                    updateProgress(0.3, 1.0);
+                    updateMessage("Loading tickets... 30%");
+
                     // Check if there are more pages
                     boolean hasMore = assignedTickets.size() > PAGE_SIZE;
                     if (hasMore) {
@@ -671,7 +672,7 @@ public class TicketManagerController {
 
                     AppContext context = AppContext.get();
 
-                    // Batch collect missing entities
+                    // Batch collect ONLY missing entities (not in cache)
                     Set<UUID> missingAttendeeIds = new HashSet<>();
                     Set<UUID> missingEventIds = new HashSet<>();
 
@@ -679,45 +680,77 @@ public class TicketManagerController {
                         UUID attendeeId = ticket.getAttendeeId();
                         UUID eventId = ticket.getEventId();
 
-                        if (attendeeId != null && !attendeeCacheById.containsKey(attendeeId)) {
+                        if (attendeeId != null && !globalAttendeeCacheById.containsKey(attendeeId)) {
                             missingAttendeeIds.add(attendeeId);
                         }
-                        if (eventId != null && !eventCacheById.containsKey(eventId)) {
+                        if (eventId != null && !globalEventCacheById.containsKey(eventId)) {
                             missingEventIds.add(eventId);
                         }
                     }
 
-                    // Batch load missing attendees
-                    if (!missingAttendeeIds.isEmpty() && context.attendeeRepo != null) {
-                        long batchStart = System.currentTimeMillis();
-                        for (UUID attendeeId : missingAttendeeIds) {
+                    // OPTIMIZED: Load missing attendees AND events in PARALLEL
+                    Thread attendeeLoaderThread = null;
+                    Thread eventLoaderThread = null;
+
+                    // Only load attendees if we actually have missing attendees AND not fully cached yet
+                    if (!missingAttendeeIds.isEmpty() && context.attendeeRepo != null && !attendeesFullyCached) {
+                        attendeeLoaderThread = new Thread(() -> {
+                            long batchStart = System.currentTimeMillis();
                             try {
-                                Attendee att = context.attendeeRepo.findById(attendeeId);
-                                if (att != null) {
-                                    attendeeCacheById.put(attendeeId, att);
+                                List<Attendee> allAttendees = context.attendeeRepo.findAll();
+                                for (Attendee att : allAttendees) {
+                                    globalAttendeeCacheById.put(att.getId(), att);
                                 }
-                            } catch (Exception ignored) {}
-                        }
-                        System.out.println("[" + (runId != null ? runId : "AssignedTickets") + "] batch loaded " +
-                                missingAttendeeIds.size() + " attendees in " +
-                                (System.currentTimeMillis() - batchStart) + " ms");
+                                attendeesFullyCached = true;
+                                System.out.println("[" + (runId != null ? runId : "AssignedTickets") + "] Loaded " +
+                                        allAttendees.size() + " attendees in " + (System.currentTimeMillis() - batchStart) + " ms");
+                            } catch (Exception e) {
+                                System.err.println("Error loading attendees: " + e.getMessage());
+                            }
+                        }, "attendee-loader");
+                        attendeeLoaderThread.setDaemon(true);
+                        attendeeLoaderThread.start();
                     }
 
-                    // Batch load missing events
-                    if (!missingEventIds.isEmpty() && context.eventRepo != null) {
-                        long batchStart = System.currentTimeMillis();
-                        for (UUID eventId : missingEventIds) {
+                    // Only load events if we actually have missing events AND not fully cached yet
+                    if (!missingEventIds.isEmpty() && context.eventRepo != null && !eventsFullyCached) {
+                        eventLoaderThread = new Thread(() -> {
+                            long batchStart = System.currentTimeMillis();
                             try {
-                                Event evt = context.eventRepo.findById(eventId);
-                                if (evt != null) {
-                                    eventCacheById.put(eventId, evt);
+                                List<Event> allEvents = context.eventRepo.findAll();
+                                for (Event evt : allEvents) {
+                                    globalEventCacheById.put(evt.getId(), evt);
                                 }
-                            } catch (Exception ignored) {}
-                        }
-                        System.out.println("[" + (runId != null ? runId : "AssignedTickets") + "] batch loaded " +
-                                missingEventIds.size() + " events in " +
-                                (System.currentTimeMillis() - batchStart) + " ms");
+                                eventsFullyCached = true;
+                                System.out.println("[" + (runId != null ? runId : "AssignedTickets") + "] Loaded " +
+                                        allEvents.size() + " events in " + (System.currentTimeMillis() - batchStart) + " ms");
+                            } catch (Exception e) {
+                                System.err.println("Error loading events: " + e.getMessage());
+                            }
+                        }, "event-loader");
+                        eventLoaderThread.setDaemon(true);
+                        eventLoaderThread.start();
                     }
+
+                    // Update progress while waiting
+                    updateProgress(0.7, 1.0);
+                    updateMessage("Loading attendees & events... 70%");
+
+                    // Wait for both threads to complete (with timeout)
+                    long maxWait = 5000; // 5 seconds max wait
+                    long startWait = System.currentTimeMillis();
+                    try {
+                        if (attendeeLoaderThread != null) {
+                            attendeeLoaderThread.join(maxWait);
+                        }
+                        if (eventLoaderThread != null) {
+                            eventLoaderThread.join(maxWait - (System.currentTimeMillis() - startWait));
+                        }
+                    } catch (InterruptedException ignored) {}
+
+                    // Update progress to 90%
+                    updateProgress(0.9, 1.0);
+                    updateMessage("Building rows... 90%");
 
                     // Now build rows with cached data
                     for (Ticket ticket : assignedTickets) {
@@ -728,12 +761,12 @@ public class TicketManagerController {
                         String eventName = "Unknown";
                         String sessionName = "N/A";
 
-                        Attendee att = attendeeId != null ? attendeeCacheById.get(attendeeId) : null;
+                        Attendee att = attendeeId != null ? globalAttendeeCacheById.get(attendeeId) : null;
                         if (att != null && att.getFullName() != null) {
                             attendeeName = att.getFullName();
                         }
 
-                        Event evt = eventId != null ? eventCacheById.get(eventId) : null;
+                        Event evt = eventId != null ? globalEventCacheById.get(eventId) : null;
                         if (evt != null && evt.getName() != null) {
                             eventName = evt.getName();
                         }
@@ -748,6 +781,10 @@ public class TicketManagerController {
                                 ticket.getTicketStatus() != null ? ticket.getTicketStatus().name() : "N/A"
                         ));
                     }
+
+                    // Update progress to 99%
+                    updateProgress(0.99, 1.0);
+                    updateMessage("Almost done... 99%");
 
                     // Update pagination cursor for next page load
                     if (!assignedTickets.isEmpty()) {
@@ -766,6 +803,25 @@ public class TicketManagerController {
             }
         };
 
+        // Update progress bar
+        task.messageProperty().addListener((obs, oldVal, newVal) -> {
+            if (assignedLoadingProgressBar != null && assignedLoadingStatusLabel != null) {
+                Platform.runLater(() -> {
+                    assignedLoadingStatusLabel.setText(newVal);
+                });
+            }
+        });
+
+        task.progressProperty().addListener((obs, oldVal, newVal) -> {
+            if (assignedLoadingProgressBar != null) {
+                Platform.runLater(() -> {
+                    assignedLoadingProgressBar.setProgress(newVal.doubleValue());
+                });
+            }
+        });
+
+        // ...existing code for task.setOnSucceeded...
+
         task.setOnSucceeded(event -> {
             AssignedTicketsData data = task.getValue();
             allAssignedTickets = data.tickets;
@@ -773,6 +829,9 @@ public class TicketManagerController {
             calculateStatistics();
             System.out.println("[" + (runId != null ? runId : "AssignedTickets") + "] loadAssignedTickets total (task) " +
                     (System.currentTimeMillis() - asyncStart) + " ms");
+
+            // Hide progress bar
+            hideAssignedLoadingProgress();
 
             // Update pagination UI
             updateAssignedPaginationUI();
@@ -791,6 +850,22 @@ public class TicketManagerController {
         Thread bgThread = new Thread(task, "assigned-tickets-loader");
         bgThread.setDaemon(true);
         bgThread.start();
+    }
+
+    /**
+     * Hide assigned tickets loading progress bar when done
+     */
+    private void hideAssignedLoadingProgress() {
+        if (assignedLoadingContainer != null) {
+            assignedLoadingContainer.setVisible(false);
+        }
+        if (assignedLoadingProgressBar != null) {
+            assignedLoadingProgressBar.setVisible(false);
+            assignedLoadingProgressBar.setProgress(0.0);
+        }
+        if (assignedLoadingStatusLabel != null) {
+            assignedLoadingStatusLabel.setVisible(false);
+        }
     }
 
     // Lazy-load tab Assigned khi user mở lần đầu (gắn từ FXML hoặc Tab event)

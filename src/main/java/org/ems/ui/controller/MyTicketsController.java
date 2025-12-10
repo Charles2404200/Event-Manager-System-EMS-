@@ -11,15 +11,16 @@ import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import org.ems.config.AppContext;
 import org.ems.domain.model.*;
-import org.ems.domain.model.enums.TicketStatus;
 import org.ems.infrastructure.util.QRCodeUtil;
 import org.ems.ui.stage.SceneManager;
+import org.ems.ui.util.AsyncTaskService;
 
 import java.io.ByteArrayInputStream;
 import java.util.*;
 
 /**
  * @author <your group number>
+ * OPTIMIZED: Batch load events, async loading, avoid N+1 queries
  */
 public class MyTicketsController {
 
@@ -35,6 +36,8 @@ public class MyTicketsController {
 
     @FXML
     public void initialize() {
+        long initStart = System.currentTimeMillis();
+        System.out.println("📋 [MyTickets] initialize() starting...");
         try {
             appContext = AppContext.get();
 
@@ -52,8 +55,11 @@ public class MyTicketsController {
             // Setup table columns
             setupTableColumns();
 
-            // Load all tickets for current attendee
-            loadMyTickets();
+            System.out.println("  ✓ UI setup in " + (System.currentTimeMillis() - initStart) + " ms");
+            System.out.println("  🔄 Starting async load...");
+            
+            // Load all tickets asynchronously
+            loadMyTicketsAsync();
 
         } catch (Exception e) {
             showAlert("Error", "Failed to initialize: " + e.getMessage());
@@ -84,52 +90,93 @@ public class MyTicketsController {
         }
     }
 
-    private void loadMyTickets() {
-        try {
-            allTickets = new ArrayList<>();
-
-            if (appContext.currentUser instanceof Attendee && appContext.ticketRepo != null && appContext.eventRepo != null) {
-                Attendee attendee = (Attendee) appContext.currentUser;
-
-                // Get all tickets for this attendee
-                List<Ticket> tickets = appContext.ticketRepo.findByAttendee(attendee.getId());
-
-                // Convert to display rows
-                for (Ticket ticket : tickets) {
-                    String eventName = "Unknown";
-                    String sessionName = "Unknown";
+    /**
+     * Load tickets asynchronously to prevent UI freeze
+     * OPTIMIZED: Batch load all events in ONE query, then filter in-memory
+     */
+    private void loadMyTicketsAsync() {
+        AsyncTaskService.runAsync(
+                () -> {
+                    long taskStart = System.currentTimeMillis();
+                    System.out.println("    🔄 [Background] Loading tickets...");
+                    
+                    List<TicketRow> tickets = new ArrayList<>();
 
                     try {
-                        if (appContext.eventRepo != null && ticket.getEventId() != null) {
-                            Event event = appContext.eventRepo.findById(ticket.getEventId());
-                            if (event != null) eventName = event.getName();
+                        if (appContext.currentUser instanceof Attendee && appContext.ticketRepo != null && appContext.eventRepo != null) {
+                            Attendee attendee = (Attendee) appContext.currentUser;
+
+                            long ticketStart = System.currentTimeMillis();
+                            // BATCH LOAD: Get all tickets in ONE query
+                            List<Ticket> allTicketsFromDb = appContext.ticketRepo.findByAttendee(attendee.getId());
+                            long ticketTime = System.currentTimeMillis() - ticketStart;
+                            System.out.println("    ✓ findByAttendee() took " + ticketTime + " ms: " + allTicketsFromDb.size() + " tickets");
+
+                            if (allTicketsFromDb.isEmpty()) {
+                                System.out.println("    ℹ No tickets found");
+                                return tickets;
+                            }
+
+                            // BATCH LOAD: Get all events in ONE query (not N queries!)
+                            long eventStart = System.currentTimeMillis();
+                            List<Event> allEvents = appContext.eventRepo.findAll();
+                            long eventTime = System.currentTimeMillis() - eventStart;
+                            System.out.println("    ✓ findAll() took " + eventTime + " ms: " + allEvents.size() + " events");
+
+                            // Create eventId -> Event map for O(1) lookup
+                            Map<UUID, Event> eventMap = new HashMap<>();
+                            for (Event event : allEvents) {
+                                eventMap.put(event.getId(), event);
+                            }
+
+                            // OPTIMIZE: Single pass - no nested queries
+                            long convertStart = System.currentTimeMillis();
+                            for (Ticket ticket : allTicketsFromDb) {
+                                String eventName = "Unknown";
+                                
+                                // O(1) lookup instead of DB query
+                                if (ticket.getEventId() != null && eventMap.containsKey(ticket.getEventId())) {
+                                    Event event = eventMap.get(ticket.getEventId());
+                                    if (event != null && event.getName() != null) {
+                                        eventName = event.getName();
+                                    }
+                                }
+
+                                tickets.add(new TicketRow(
+                                        ticket.getId().toString().substring(0, 8),
+                                        eventName,
+                                        "Event Ticket",
+                                        ticket.getType() != null ? ticket.getType().name() : "N/A",
+                                        ticket.getPrice() != null ? "$" + ticket.getPrice() : "$0",
+                                        ticket.getTicketStatus() != null ? ticket.getTicketStatus().name() : "N/A",
+                                        "2025-12-03",
+                                        ticket.getQrCodeData() != null ? ticket.getQrCodeData() : "N/A"
+                                ));
+                            }
+                            long convertTime = System.currentTimeMillis() - convertStart;
+                            System.out.println("    ✓ Converted to display rows in " + convertTime + " ms");
                         }
-                        // Note: Tickets are now event-level only, not session-specific
-                        // sessionName will be "N/A" for event-level tickets
                     } catch (Exception e) {
-                        System.err.println("Error loading ticket details: " + e.getMessage());
+                        System.err.println("    ✗ Error loading tickets: " + e.getMessage());
+                        e.printStackTrace();
                     }
 
-                    allTickets.add(new TicketRow(
-                            ticket.getId().toString().substring(0, 8),
-                            eventName,
-                            "Event Ticket",  // Show "Event Ticket" instead of session name
-                            ticket.getType() != null ? ticket.getType().name() : "N/A",
-                            ticket.getPrice() != null ? "$" + ticket.getPrice() : "$0",
-                            ticket.getTicketStatus() != null ? ticket.getTicketStatus().name() : "N/A",
-                            "2025-12-03", // TODO: Add created_at timestamp to Ticket model
-                            ticket.getQrCodeData() != null ? ticket.getQrCodeData() : "N/A"
-                    ));
+                    System.out.println("    ✓ Background task completed in " + (System.currentTimeMillis() - taskStart) + " ms");
+                    return tickets;
+                },
+                tickets -> {
+                    long uiStart = System.currentTimeMillis();
+                    allTickets = tickets;
+                    displayTickets(allTickets);
+                    calculateTotalValue();
+                    System.out.println("  ✓ UI updated in " + (System.currentTimeMillis() - uiStart) + " ms");
+                    System.out.println("✓ MyTickets loaded successfully");
+                },
+                error -> {
+                    showAlert("Error", "Failed to load tickets: " + error.getMessage());
+                    System.err.println("✗ Error loading tickets: " + error.getMessage());
                 }
-            }
-
-            displayTickets(allTickets);
-            calculateTotalValue();
-
-        } catch (Exception e) {
-            showAlert("Error", "Failed to load tickets: " + e.getMessage());
-            e.printStackTrace();
-        }
+        );
     }
 
     private void displayTickets(List<TicketRow> tickets) {

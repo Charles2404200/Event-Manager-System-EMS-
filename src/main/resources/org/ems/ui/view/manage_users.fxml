@@ -8,6 +8,7 @@
 <?import javafx.scene.control.TableView?>
 <?import javafx.scene.control.TableColumn?>
 <?import javafx.scene.control.ComboBox?>
+<?import javafx.scene.control.ProgressBar?>
 <?import javafx.geometry.Insets?>
 
 <BorderPane xmlns="http://javafx.com/javafx"
@@ -48,6 +49,13 @@
             <!-- Users Table -->
             <VBox style="-fx-border-color: #cccccc; -fx-border-width: 1; -fx-padding: 10; -fx-border-radius: 5;" VBox.vgrow="ALWAYS">
                 <Label text="Users List" style="-fx-font-size: 14; -fx-font-weight: bold; -fx-padding: 5;"/>
+
+                <!-- Loading Placeholder -->
+                <VBox fx:id="loadingPlaceholder" style="-fx-alignment: center; -fx-spacing: 15; -fx-padding: 100;" VBox.vgrow="ALWAYS" visible="true">
+                    <Label text="Loading users..." style="-fx-font-size: 16; -fx-font-weight: bold; -fx-text-fill: #2c3e50;"/>
+                    <ProgressBar fx:id="loadingProgressBar" prefWidth="300" prefHeight="25" style="-fx-padding: 5;"/>
+                    <Label fx:id="loadingPercentLabel" text="0%" style="-fx-font-size: 14; -fx-text-fill: #666;"/>
+                </VBox>
 
                 <TableView fx:id="usersTable" prefHeight="500" VBox.vgrow="ALWAYS">
                     <columns>

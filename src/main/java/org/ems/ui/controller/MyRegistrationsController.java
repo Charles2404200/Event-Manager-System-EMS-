@@ -1,5 +1,6 @@
 package org.ems.ui.controller;
 
+import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.fxml.FXML;
@@ -7,14 +8,17 @@ import javafx.scene.control.*;
 import javafx.geometry.Insets;
 import javafx.scene.layout.VBox;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
 import org.ems.config.AppContext;
 import org.ems.domain.model.*;
 import org.ems.ui.stage.SceneManager;
+import org.ems.ui.util.AsyncTaskService;
 
 import java.util.*;
 
 /**
  * Register Sessions Page
+ * OPTIMIZED: Async loading, batch queries, consistent with other pages
  * @author <your group number>
  */
 public class MyRegistrationsController {
@@ -22,6 +26,9 @@ public class MyRegistrationsController {
     @FXML private ComboBox<String> eventCombo;
     @FXML private VBox sessionsContainer;
     @FXML private Label recordCountLabel;
+    @FXML private VBox loadingPlaceholder;
+    @FXML private ProgressBar loadingProgressBar;
+    @FXML private Label loadingPercentLabel;
 
     private List<Session> availableSessions = new ArrayList<>();
     private Map<String, UUID> eventMap = new HashMap<>();
@@ -30,97 +37,194 @@ public class MyRegistrationsController {
 
     @FXML
     public void initialize() {
+        long initStart = System.currentTimeMillis();
+        System.out.println("📋 [MyRegistrations] initialize() starting...");
         try {
             appContext = AppContext.get();
-            loadEventsWithTickets();
+
+            // Hide loading placeholder initially
+            if (loadingPlaceholder != null) {
+                loadingPlaceholder.setVisible(false);
+                loadingPlaceholder.setManaged(false);
+            }
+
+            System.out.println("  ✓ UI setup in " + (System.currentTimeMillis() - initStart) + " ms");
+            System.out.println("  🔄 Starting async load...");
+
+            // Load events with tickets asynchronously
+            loadEventsWithTicketsAsync();
+
         } catch (Exception e) {
+            System.err.println("✗ initialize() failed: " + e.getMessage());
             showAlert("Error", "Failed to initialize: " + e.getMessage());
             e.printStackTrace();
         }
     }
 
     /**
-     * Load all events where user has tickets
+     * Load all events where user has tickets - ASYNC
      */
-    private void loadEventsWithTickets() {
-        try {
-            if (appContext.currentUser instanceof Attendee && appContext.ticketRepo != null && appContext.eventRepo != null) {
-                Attendee attendee = (Attendee) appContext.currentUser;
+    private void loadEventsWithTicketsAsync() {
+        long asyncStart = System.currentTimeMillis();
 
-                // Get all tickets for current attendee
-                List<Ticket> tickets = appContext.ticketRepo.findByAttendee(attendee.getId());
+        AsyncTaskService.runAsync(
+                () -> {
+                    long taskStart = System.currentTimeMillis();
+                    System.out.println("    🔄 [Background] Loading events with tickets...");
 
-                if (tickets == null || tickets.isEmpty()) {
-                    Label noTicketsLabel = new Label("No tickets yet. Buy a ticket first to register for sessions!");
-                    noTicketsLabel.setStyle("-fx-font-size: 12; -fx-text-fill: #999;");
-                    sessionsContainer.getChildren().add(noTicketsLabel);
-                    return;
-                }
+                    List<String> eventNames = new ArrayList<>();
+                    Map<String, UUID> tempEventMap = new HashMap<>();
 
-                // Get unique events from tickets
-                Set<UUID> eventIds = new HashSet<>();
-                for (Ticket ticket : tickets) {
-                    if (ticket.getEventId() != null) {
-                        eventIds.add(ticket.getEventId());
+                    try {
+                        if (appContext.currentUser instanceof Attendee && appContext.ticketRepo != null && appContext.eventRepo != null) {
+                            Attendee attendee = (Attendee) appContext.currentUser;
+
+                            // Step 1: Get all tickets for attendee
+                            long ticketStart = System.currentTimeMillis();
+                            List<Ticket> tickets = appContext.ticketRepo.findByAttendee(attendee.getId());
+                            long ticketTime = System.currentTimeMillis() - ticketStart;
+                            System.out.println("    ✓ Loaded " + tickets.size() + " tickets in " + ticketTime + " ms");
+
+                            if (tickets == null || tickets.isEmpty()) {
+                                System.out.println("    ℹ No tickets found");
+                                return new Object[]{eventNames, tempEventMap};
+                            }
+
+                            // Step 2: Get unique event IDs from tickets
+                            Set<UUID> eventIds = new HashSet<>();
+                            for (Ticket ticket : tickets) {
+                                if (ticket.getEventId() != null) {
+                                    eventIds.add(ticket.getEventId());
+                                }
+                            }
+                            System.out.println("    ✓ Found " + eventIds.size() + " unique events");
+
+                            // Step 3: Load all events ONCE (batch)
+                            long eventStart = System.currentTimeMillis();
+                            List<Event> allEvents = appContext.eventRepo.findAll();
+                            long eventTime = System.currentTimeMillis() - eventStart;
+                            System.out.println("    ✓ Loaded all " + allEvents.size() + " events in " + eventTime + " ms");
+
+                            // Step 4: Match tickets to events (in-memory)
+                            for (UUID eventId : eventIds) {
+                                Event event = allEvents.stream()
+                                    .filter(e -> e.getId().equals(eventId))
+                                    .findFirst()
+                                    .orElse(null);
+
+                                if (event != null && event.getName() != null) {
+                                    String display = event.getName();
+                                    eventNames.add(display);
+                                    tempEventMap.put(display, eventId);
+                                }
+                            }
+                            System.out.println("    ✓ Matched " + eventNames.size() + " events");
+                        }
+                    } catch (Exception e) {
+                        System.err.println("    ✗ Error loading events: " + e.getMessage());
+                        e.printStackTrace();
                     }
-                }
 
-                // Build event combo
-                List<String> eventNames = new ArrayList<>();
-                List<Event> allEvents = appContext.eventRepo.findAll();
+                    System.out.println("    ✓ Background task completed in " + (System.currentTimeMillis() - taskStart) + " ms");
+                    return new Object[]{eventNames, tempEventMap};
+                },
+                result -> {
+                    long uiStart = System.currentTimeMillis();
+                    @SuppressWarnings("unchecked")
+                    Object[] data = (Object[]) result;
+                    @SuppressWarnings("unchecked")
+                    List<String> eventNames = (List<String>) data[0];
+                    @SuppressWarnings("unchecked")
+                    Map<String, UUID> tempEventMap = (Map<String, UUID>) data[1];
 
-                for (UUID eventId : eventIds) {
-                    Event event = allEvents.stream()
-                        .filter(e -> e.getId().equals(eventId))
-                        .findFirst()
-                        .orElse(null);
+                    eventMap.putAll(tempEventMap);
+                    eventCombo.setItems(FXCollections.observableArrayList(eventNames));
 
-                    if (event != null) {
-                        String display = event.getName();
-                        eventNames.add(display);
-                        eventMap.put(display, eventId);
+                    if (!eventNames.isEmpty()) {
+                        eventCombo.setValue(eventNames.get(0));
+                        loadSessionsForEvent(eventMap.get(eventNames.get(0)));
+                    } else {
+                        Label noTicketsLabel = new Label("No tickets yet. Buy a ticket first to register for sessions!");
+                        noTicketsLabel.setStyle("-fx-font-size: 12; -fx-text-fill: #999;");
+                        sessionsContainer.getChildren().clear();
+                        sessionsContainer.getChildren().add(noTicketsLabel);
                     }
+
+                    // Setup event combo listener
+                    eventCombo.setOnAction(e -> {
+                        String selected = eventCombo.getValue();
+                        if (selected != null && eventMap.containsKey(selected)) {
+                            loadSessionsForEvent(eventMap.get(selected));
+                        }
+                    });
+
+                    System.out.println("  ✓ UI updated in " + (System.currentTimeMillis() - uiStart) + " ms");
+                    System.out.println("✓ MyRegistrations loaded successfully");
+                },
+                error -> {
+                    System.err.println("✗ Error loading events: " + error.getMessage());
+                    showAlert("Error", "Failed to load events: " + error.getMessage());
                 }
-
-                eventCombo.setItems(FXCollections.observableArrayList(eventNames));
-                if (!eventNames.isEmpty()) {
-                    eventCombo.setValue(eventNames.get(0));
-                    loadSessionsForEvent(eventMap.get(eventNames.get(0)));
-                }
-
-                // Load sessions when event selected
-                eventCombo.setOnAction(e -> {
-                    String selected = eventCombo.getValue();
-                    if (selected != null && eventMap.containsKey(selected)) {
-                        loadSessionsForEvent(eventMap.get(selected));
-                    }
-                });
-
-            }
-        } catch (Exception e) {
-            showAlert("Error", "Failed to load events: " + e.getMessage());
-            e.printStackTrace();
-        }
+        );
     }
 
     /**
-     * Load all sessions for selected event
+     * Load all sessions for selected event - ASYNC
      */
     private void loadSessionsForEvent(UUID eventId) {
-        try {
-            // Clear previous sessions
+        long loadStart = System.currentTimeMillis();
+        System.out.println("🎤 [MyRegistrations] Loading sessions for event: " + eventId);
+
+        showLoadingPlaceholder();
+
+        AsyncTaskService.runAsync(
+                () -> {
+                    long taskStart = System.currentTimeMillis();
+                    System.out.println("    🔄 [Background] Loading sessions...");
+
+                    List<Session> sessions = new ArrayList<>();
+                    try {
+                        if (appContext.sessionRepo != null) {
+                            sessions = appContext.sessionRepo.findByEvent(eventId);
+                            long queryTime = System.currentTimeMillis() - taskStart;
+                            System.out.println("    ✓ Loaded " + sessions.size() + " sessions in " + queryTime + " ms");
+                        }
+                    } catch (Exception e) {
+                        System.err.println("    ✗ Error loading sessions: " + e.getMessage());
+                        e.printStackTrace();
+                    }
+
+                    return sessions;
+                },
+                sessions -> {
+                    long uiStart = System.currentTimeMillis();
+                    displaySessions(sessions);
+                    System.out.println("  ✓ UI updated in " + (System.currentTimeMillis() - uiStart) + " ms");
+                    System.out.println("✓ Sessions loaded in " + (System.currentTimeMillis() - loadStart) + " ms");
+                },
+                error -> {
+                    showTable();
+                    System.err.println("✗ Error loading sessions: " + error.getMessage());
+                    showAlert("Error", "Failed to load sessions: " + error.getMessage());
+                }
+        );
+    }
+
+    /**
+     * Display sessions UI
+     */
+    private void displaySessions(List<Session> sessions) {
+        Platform.runLater(() -> {
             sessionsContainer.getChildren().clear();
             sessionCheckMap.clear();
             availableSessions.clear();
-
-            // Get sessions for this event
-            List<Session> sessions = appContext.sessionRepo.findByEvent(eventId);
 
             if (sessions == null || sessions.isEmpty()) {
                 Label noSessionsLabel = new Label("No sessions available for this event");
                 noSessionsLabel.setStyle("-fx-font-size: 12; -fx-text-fill: #999;");
                 sessionsContainer.getChildren().add(noSessionsLabel);
                 recordCountLabel.setText("Total Sessions: 0");
+                showTable();
                 return;
             }
 
@@ -156,6 +260,7 @@ public class MyRegistrationsController {
                 capacityLabel.setStyle("-fx-font-size: 10; -fx-text-fill: #666;");
 
                 sessionRow.getChildren().addAll(checkbox, sessionLabel, capacityLabel);
+                HBox.setHgrow(sessionLabel, Priority.ALWAYS);
                 sessionsContainer.getChildren().add(sessionRow);
             }
 
@@ -167,70 +272,90 @@ public class MyRegistrationsController {
             HBox buttonBox = new HBox(10);
             buttonBox.setPadding(new Insets(10));
 
-            Button saveButton = new Button("Save Registration");
-            saveButton.setStyle("-fx-padding: 8 15; -fx-font-size: 11; -fx-cursor: hand;");
+            Button saveButton = new Button("💾 Save Registration");
+            saveButton.setStyle("-fx-padding: 8 15; -fx-font-size: 11; -fx-cursor: hand; -fx-background-color: #27ae60; -fx-text-fill: white;");
             saveButton.setOnAction(e -> saveRegistrations());
 
-            Button clearButton = new Button("Clear All");
-            clearButton.setStyle("-fx-padding: 8 15; -fx-font-size: 11; -fx-cursor: hand;");
-            clearButton.setOnAction(e -> clearAllSelections());
-
-            Button selectAllButton = new Button("Select All");
+            Button selectAllButton = new Button("✓ Select All");
             selectAllButton.setStyle("-fx-padding: 8 15; -fx-font-size: 11; -fx-cursor: hand;");
             selectAllButton.setOnAction(e -> selectAllSessions());
 
-            buttonBox.getChildren().addAll(saveButton, clearButton, selectAllButton);
+            Button clearButton = new Button("✗ Clear All");
+            clearButton.setStyle("-fx-padding: 8 15; -fx-font-size: 11; -fx-cursor: hand;");
+            clearButton.setOnAction(e -> clearAllSelections());
+
+            buttonBox.getChildren().addAll(saveButton, selectAllButton, clearButton);
             sessionsContainer.getChildren().add(buttonBox);
 
             recordCountLabel.setText("Total Sessions: " + sessions.size());
 
-        } catch (Exception e) {
-            showAlert("Error", "Failed to load sessions: " + e.getMessage());
-            e.printStackTrace();
-        }
+            showTable();
+        });
     }
 
     /**
-     * Save selected sessions registration
+     * Save selected sessions registration - ASYNC
      */
     @FXML
     private void saveRegistrations() {
-        try {
-            List<UUID> selectedSessions = new ArrayList<>();
+        long saveStart = System.currentTimeMillis();
+        System.out.println("💾 [MyRegistrations] Saving registrations...");
 
-            for (CheckBox checkbox : sessionCheckMap.keySet()) {
-                if (checkbox.isSelected()) {
-                    selectedSessions.add(sessionCheckMap.get(checkbox));
-                }
+        List<UUID> selectedSessions = new ArrayList<>();
+
+        for (CheckBox checkbox : sessionCheckMap.keySet()) {
+            if (checkbox.isSelected()) {
+                selectedSessions.add(sessionCheckMap.get(checkbox));
             }
-
-            if (selectedSessions.isEmpty()) {
-                showAlert("Warning", "Please select at least one session to register");
-                return;
-            }
-
-            // Register attendee for each selected session
-            if (appContext.currentUser instanceof Attendee && appContext.sessionRepo != null) {
-                Attendee attendee = (Attendee) appContext.currentUser;
-                int successCount = 0;
-
-                for (UUID sessionId : selectedSessions) {
-                    try {
-                        appContext.sessionRepo.registerAttendeeForSession(attendee.getId(), sessionId);
-                        successCount++;
-                    } catch (Exception e) {
-                        System.err.println("Failed to register for session " + sessionId + ": " + e.getMessage());
-                    }
-                }
-
-                showAlert("Success", "Successfully registered for " + successCount + " session(s)!");
-                System.out.println("✓ Attendee " + attendee.getId() + " registered for " + successCount + " sessions");
-            }
-
-        } catch (Exception e) {
-            showAlert("Error", "Failed to save registrations: " + e.getMessage());
-            e.printStackTrace();
         }
+
+        if (selectedSessions.isEmpty()) {
+            showAlert("Warning", "Please select at least one session to register");
+            return;
+        }
+
+        showLoadingPlaceholder();
+
+        AsyncTaskService.runAsync(
+                () -> {
+                    long taskStart = System.currentTimeMillis();
+                    System.out.println("    🔄 [Background] Registering for " + selectedSessions.size() + " sessions...");
+
+                    try {
+                        if (appContext.currentUser instanceof Attendee && appContext.sessionRepo != null) {
+                            Attendee attendee = (Attendee) appContext.currentUser;
+                            int successCount = 0;
+
+                            for (UUID sessionId : selectedSessions) {
+                                try {
+                                    appContext.sessionRepo.registerAttendeeForSession(attendee.getId(), sessionId);
+                                    successCount++;
+                                } catch (Exception e) {
+                                    System.err.println("    ⚠️ Failed to register for session " + sessionId + ": " + e.getMessage());
+                                }
+                            }
+
+                            System.out.println("    ✓ Successfully registered for " + successCount + " sessions in " + (System.currentTimeMillis() - taskStart) + " ms");
+                            return successCount;
+                        }
+                    } catch (Exception e) {
+                        System.err.println("    ✗ Error saving registrations: " + e.getMessage());
+                        e.printStackTrace();
+                    }
+
+                    return 0;
+                },
+                successCount -> {
+                    showTable();
+                    showAlert("Success", "Successfully registered for " + successCount + " session(s)!");
+                    System.out.println("✓ Registrations saved in " + (System.currentTimeMillis() - saveStart) + " ms");
+                },
+                error -> {
+                    showTable();
+                    System.err.println("✗ Error saving registrations: " + error.getMessage());
+                    showAlert("Error", "Failed to save registrations: " + error.getMessage());
+                }
+        );
     }
 
     /**
@@ -255,7 +380,30 @@ public class MyRegistrationsController {
 
     @FXML
     public void onBack() {
-        SceneManager.switchTo("dashboard.fxml", "EMS - Dashboard");
+        System.out.println("🔙 [MyRegistrations] Back to dashboard");
+        SceneManager.switchTo("dashboard.fxml", "Event Manager System - Dashboard");
+    }
+
+    private void showLoadingPlaceholder() {
+        Platform.runLater(() -> {
+            if (loadingPlaceholder != null) {
+                loadingPlaceholder.setVisible(true);
+                loadingPlaceholder.setManaged(true);
+            }
+            sessionsContainer.setVisible(false);
+            sessionsContainer.setManaged(false);
+        });
+    }
+
+    private void showTable() {
+        Platform.runLater(() -> {
+            if (loadingPlaceholder != null) {
+                loadingPlaceholder.setVisible(false);
+                loadingPlaceholder.setManaged(false);
+            }
+            sessionsContainer.setVisible(true);
+            sessionsContainer.setManaged(true);
+        });
     }
 
     private void showAlert(String title, String message) {
