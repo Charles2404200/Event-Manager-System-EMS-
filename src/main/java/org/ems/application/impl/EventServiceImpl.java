@@ -90,7 +90,12 @@ public class EventServiceImpl implements EventService {
     }
 
     @Override
-    public List<Session> getSessions() { return sessionRepo.findAll(); }
+    public List<Session> getSessions() {
+        // ⚡ OPTIMIZATION: Use findAllOptimized() instead of findAll()
+        // Avoids N+1 query problem: 1 query for sessions + 1 batch query for presenters
+        // Instead of: 1 query for sessions + N queries for each session's presenters
+        return sessionRepo.findAllOptimized();
+    }
 
     @Override
     public List<Session> getSessionsByDate(LocalDate date) {

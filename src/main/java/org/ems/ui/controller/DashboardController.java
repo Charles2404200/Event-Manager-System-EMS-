@@ -24,6 +24,7 @@ import org.ems.application.service.DashboardAttendeeService;
 import org.ems.application.service.DashboardPresenterService;
 import org.ems.application.service.DashboardEventAdminService;
 import org.ems.application.service.DashboardEventFilteringService;
+import org.ems.application.service.AttendeeScheduleExportService;
 import org.ems.application.dto.DashboardAttendeeContentDTO;
 import org.ems.application.dto.DashboardPresenterContentDTO;
 import org.ems.application.dto.DashboardEventAdminContentDTO;
@@ -445,8 +446,106 @@ public class DashboardController {
 
     @FXML
     public void onExportMySchedule() {
-        // TODO: Export attendee's schedule
-        System.out.println("Export My Schedule clicked");
+        long exportStart = System.currentTimeMillis();
+        System.out.println("📅 [DashboardController] Export My Schedule clicked");
+
+        // Only attendees can export schedule
+        if (!(currentUser instanceof Attendee)) {
+            showErrorDialog("Access Denied", "Only attendees can export schedule");
+            return;
+        }
+
+        Attendee attendee = (Attendee) currentUser;
+
+        // Step 1: Prompt for export format
+        String exportFormat = promptForExportFormat();
+        if (exportFormat == null) {
+            System.out.println("  ⚠️ Export format selection cancelled");
+            return;
+        }
+        System.out.println("  ✓ Selected format: " + exportFormat);
+
+        // Step 2: Get Downloads folder as default output path
+        String downloadsPath = System.getProperty("user.home") + File.separator + "Downloads";
+        System.out.println("  ✓ Output path: " + downloadsPath);
+
+        // Step 3: Show loading dialog
+        javafx.stage.Stage primaryStage = null;
+        try {
+            if (attendeeSection != null && attendeeSection.getScene() != null) {
+                primaryStage = (javafx.stage.Stage) attendeeSection.getScene().getWindow();
+            }
+        } catch (Exception e) {
+            System.err.println("Could not get primary stage: " + e.getMessage());
+        }
+
+        LoadingDialog exportDialog = null;
+        if (primaryStage != null) {
+            exportDialog = new LoadingDialog(primaryStage, "Exporting schedule as " + exportFormat + "...");
+            exportDialog.show();
+        }
+
+        // Step 4: Export schedule asynchronously
+        final LoadingDialog finalExportDialog = exportDialog;
+        AsyncTaskService.runAsync(
+                // Background task
+                () -> {
+                    long taskStart = System.currentTimeMillis();
+                    try {
+                        System.out.println("  🔄 [Background] Exporting schedule for " + attendee.getFullName());
+
+                        // Create service and export
+                        AttendeeScheduleExportService exportService = new AttendeeScheduleExportService(
+                                appContext.ticketRepo,
+                                appContext.eventRepo,
+                                appContext.sessionRepo
+                        );
+
+                        String filePath;
+                        switch (exportFormat.toLowerCase()) {
+                            case "csv":
+                                filePath = exportService.exportScheduleToCSV(attendee, downloadsPath);
+                                break;
+                            case "excel":
+                                filePath = exportService.exportScheduleToExcel(attendee, downloadsPath);
+                                break;
+                            case "pdf":
+                                filePath = exportService.exportScheduleToPDF(attendee, downloadsPath);
+                                break;
+                            default:
+                                throw new IllegalArgumentException("Unsupported format: " + exportFormat);
+                        }
+
+                        System.out.println("  ✓ Schedule exported in " + (System.currentTimeMillis() - taskStart) + "ms");
+                        System.out.println("  ✓ File: " + filePath);
+                        return filePath;
+
+                    } catch (AttendeeScheduleExportService.ScheduleExportException e) {
+                        System.err.println("  ✗ Export error: " + e.getMessage());
+                        throw new RuntimeException(e);
+                    }
+                },
+
+                // Success callback
+                result -> {
+                    if (finalExportDialog != null) {
+                        finalExportDialog.close();
+                    }
+                    System.out.println("✓ Export completed in " + (System.currentTimeMillis() - exportStart) + "ms");
+                    showSuccessDialog("Export Successful",
+                        "Your schedule has been exported successfully!\n\nFile: " + result);
+                },
+
+                // Error callback
+                error -> {
+                    if (finalExportDialog != null) {
+                        finalExportDialog.close();
+                    }
+                    System.err.println("✗ Export failed: " + error.getMessage());
+                    showErrorDialog("Export Failed",
+                        "Failed to export schedule:\n\n" + error.getMessage());
+                }
+        );
     }
 
     @FXML
@@ -466,19 +565,79 @@ public class DashboardController {
 
     @FXML
     public void onUploadMaterials() {
-        // Example: Prompt for file and session, then upload
-        String filePath = promptForMaterialFile(); // Implement file chooser
-        String sessionId = promptForSessionId();   // Implement session selection
-        if (filePath != null && sessionId != null) {
-            try {
-                String materialPath = dashboardPresenterService.uploadSessionMaterial(sessionId, filePath);
-                System.out.println("Material uploaded: " + materialPath);
-                // Optionally show success dialog or update UI
-            } catch (DashboardPresenterService.DashboardPresenterException e) {
-                System.err.println("Material upload failed: " + e.getMessage());
-                // Optionally show error dialog
-            }
+        long uploadStart = System.currentTimeMillis();
+        System.out.println("📤 [DashboardController] Upload materials clicked");
+
+        // Step 1: Prompt for session selection FIRST
+        String sessionId = promptForSessionId();
+        if (sessionId == null) {
+            System.out.println("  ⚠️ Session selection cancelled");
+            return;
         }
+        System.out.println("  ✓ Selected session: " + sessionId);
+
+        // Step 2: Prompt for file selection
+        String filePath = promptForMaterialFile();
+        if (filePath == null) {
+            System.out.println("  ⚠️ Material file selection cancelled");
+            return;
+        }
+        System.out.println("  ✓ Selected file: " + filePath);
+
+        // Step 3: Show loading dialog
+        javafx.stage.Stage primaryStage = null;
+        try {
+            if (presenterSection != null && presenterSection.getScene() != null) {
+                primaryStage = (javafx.stage.Stage) presenterSection.getScene().getWindow();
+            }
+        } catch (Exception e) {
+            System.err.println("Could not get primary stage: " + e.getMessage());
+        }
+
+        LoadingDialog uploadDialog = null;
+        if (primaryStage != null) {
+            uploadDialog = new LoadingDialog(primaryStage, "Uploading material...");
+            uploadDialog.show();
+        }
+
+        // Step 4: Upload material asynchronously
+        final LoadingDialog finalUploadDialog = uploadDialog;
+        AsyncTaskService.runAsync(
+                // Background task
+                () -> {
+                    long taskStart = System.currentTimeMillis();
+                    try {
+                        System.out.println("  🔄 [Background] Uploading material to session: " + sessionId);
+                        String materialPath = dashboardPresenterService.uploadSessionMaterial(sessionId, filePath);
+                        System.out.println("  ✓ Material uploaded in " + (System.currentTimeMillis() - taskStart) + "ms");
+                        System.out.println("  ✓ Material path: " + materialPath);
+                        return materialPath;
+                    } catch (DashboardPresenterService.DashboardPresenterException e) {
+                        System.err.println("  ✗ Upload error: " + e.getMessage());
+                        throw new RuntimeException(e);
+                    }
+                },
+
+                // Success callback
+                result -> {
+                    if (finalUploadDialog != null) {
+                        finalUploadDialog.close();
+                    }
+                    System.out.println("✓ Upload completed in " + (System.currentTimeMillis() - uploadStart) + "ms");
+                    showSuccessDialog("Material uploaded successfully!",
+                        "Your material has been saved to session.\n\nPath: " + result);
+                },
+
+                // Error callback
+                error -> {
+                    if (finalUploadDialog != null) {
+                        finalUploadDialog.close();
+                    }
+                    System.err.println("✗ Upload failed: " + error.getMessage());
+                    showErrorDialog("Upload Failed",
+                        "Failed to upload material:\n\n" + error.getMessage());
+                }
+        );
     }
 
     @FXML
@@ -590,6 +749,24 @@ public class DashboardController {
         SceneManager.switchTo("home.fxml", "EMS - Home");
     }
 
+    /**
+     * Prompt user to select export format (CSV, Excel, PDF)
+     */
+    private String promptForExportFormat() {
+        try {
+            List<String> formats = java.util.Arrays.asList("CSV", "Excel", "PDF");
+            javafx.scene.control.ChoiceDialog<String> dialog = new javafx.scene.control.ChoiceDialog<>(formats.get(0), formats);
+            dialog.setTitle("Export Schedule");
+            dialog.setHeaderText("Select export format");
+            dialog.setContentText("Format:");
+            java.util.Optional<String> result = dialog.showAndWait();
+            return result.orElse(null);
+        } catch (Exception e) {
+            System.err.println("Error in promptForExportFormat: " + e.getMessage());
+            return null;
+        }
+    }
+
     // Helper stubs for file/session selection
     private String promptForMaterialFile() {
         try {
@@ -630,5 +807,31 @@ public class DashboardController {
             }
         }
         return null;
+    }
+
+    /**
+     * Show success dialog
+     */
+    private void showSuccessDialog(String title, String message) {
+        Platform.runLater(() -> {
+            javafx.scene.control.Alert alert = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.INFORMATION);
+            alert.setTitle(title);
+            alert.setHeaderText(null);
+            alert.setContentText(message);
+            alert.showAndWait();
+        });
+    }
+
+    /**
+     * Show error dialog
+     */
+    private void showErrorDialog(String title, String message) {
+        Platform.runLater(() -> {
+            javafx.scene.control.Alert alert = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.ERROR);
+            alert.setTitle(title);
+            alert.setHeaderText(null);
+            alert.setContentText(message);
+            alert.showAndWait();
+        });
     }
 }

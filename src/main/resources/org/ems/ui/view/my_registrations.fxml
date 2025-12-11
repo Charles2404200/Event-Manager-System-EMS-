@@ -12,60 +12,58 @@
     <!-- Top: Title Section -->
     <top>
         <VBox spacing="0" style="-fx-background-color: #2c3e50; -fx-padding: 15;">
-            <Label text="Register for Sessions"
+            <Label text="📋 Register for Sessions"
                    style="-fx-font-size: 24; -fx-font-weight: bold; -fx-text-fill: white;"/>
-            <Label text="Select sessions to register for your purchased events"
+            <Label text="View all available sessions, check materials, and manage your registrations"
                    style="-fx-font-size: 12; -fx-text-fill: #ecf0f1;"/>
         </VBox>
     </top>
 
     <!-- Center: Main Content -->
     <center>
-        <VBox spacing="15" style="-fx-padding: 20;">
+        <VBox spacing="15" style="-fx-padding: 20; -fx-background-color: #f5f5f5;">
 
-            <!-- Registered Sessions Section -->
-            <VBox fx:id="registeredSessionsContainer" spacing="8"
-                  style="-fx-border-color: #27ae60; -fx-border-width: 2; -fx-padding: 12; -fx-border-radius: 5; -fx-background-color: #eafaf1;">
-                <Label text="Sessions You Have Registered"
-                       style="-fx-font-size: 15; -fx-font-weight: bold; -fx-text-fill: #27ae60;"/>
-                <!-- Session rows will be added dynamically by controller -->
-            </VBox>
-
-            <!-- Event Selection Section -->
-            <HBox spacing="10" style="-fx-border-color: #cccccc; -fx-border-width: 1; -fx-padding: 15; -fx-border-radius: 5;">
-                <Label text="Select Event:" style="-fx-font-size: 12; -fx-font-weight: bold;"/>
-                <ComboBox fx:id="eventCombo" prefWidth="400" style="-fx-padding: 8;"/>
+            <!-- Event Selection -->
+            <HBox spacing="10" style="-fx-background-color: white; -fx-border-color: #ddd; -fx-border-width: 1; -fx-padding: 15; -fx-border-radius: 5;">
+                <Label text="📌 Select Event:"
+                       style="-fx-font-size: 12; -fx-font-weight: bold; -fx-text-fill: #2c3e50;"/>
+                <ComboBox fx:id="eventCombo" prefWidth="350"
+                         style="-fx-padding: 8; -fx-font-size: 11;"/>
                 <Region HBox.hgrow="ALWAYS"/>
+                <Label fx:id="recordCountLabel" text="Total Sessions: 0"
+                       style="-fx-font-size: 11; -fx-text-fill: #666;"/>
             </HBox>
 
-            <!-- Sessions Container with Loading Placeholder -->
-            <VBox style="-fx-border-color: #cccccc; -fx-border-width: 1; -fx-padding: 10; -fx-border-radius: 5;" VBox.vgrow="ALWAYS">
+            <!-- Main Sessions Table Container -->
+            <VBox style="-fx-background-color: white; -fx-border-color: #ddd; -fx-border-width: 1; -fx-padding: 10; -fx-border-radius: 5;" VBox.vgrow="ALWAYS">
 
                 <!-- Loading Placeholder -->
                 <VBox fx:id="loadingPlaceholder"
-                      style="-fx-alignment: center; -fx-spacing: 15; -fx-padding: 100;"
-                      VBox.vgrow="ALWAYS" visible="true">
-                    <Label text="Loading sessions..."
+                      alignment="CENTER"
+                      spacing="15"
+                      style="-fx-alignment: center; -fx-padding: 100;"
+                      VBox.vgrow="ALWAYS">
+                    <Label text="⏳ Loading sessions..."
                            style="-fx-font-size: 16; -fx-font-weight: bold; -fx-text-fill: #2c3e50;"/>
-                    <ProgressBar fx:id="loadingProgressBar" prefWidth="300" prefHeight="25" style="-fx-padding: 5;"/>
+                    <ProgressBar fx:id="loadingProgressBar" prefWidth="300" prefHeight="20"/>
                     <Label fx:id="loadingPercentLabel" text="0%"
-                           style="-fx-font-size: 14; -fx-text-fill: #666;"/>
+                           style="-fx-font-size: 12; -fx-text-fill: #666;"/>
                 </VBox>
 
-                <!-- Sessions List (Hidden while loading) -->
-                <ScrollPane fx:id="sessionsScrollPane" fitToWidth="true"
-                           style="-fx-padding: 0; -fx-border: none;" VBox.vgrow="ALWAYS" visible="true" managed="true">
-                    <VBox fx:id="sessionsContainer" spacing="0" style="-fx-padding: 0;"/>
-                </ScrollPane>
+                <!-- Sessions Container (Table View) -->
+                <VBox fx:id="sessionsContainer" spacing="0" VBox.vgrow="ALWAYS" visible="false" managed="false"/>
 
             </VBox>
 
-            <!-- Record Count -->
-            <HBox spacing="10">
-                <Label fx:id="recordCountLabel" text="Total Sessions: 0"
-                       style="-fx-font-size: 11; -fx-text-fill: #666;"/>
-                <Region HBox.hgrow="ALWAYS"/>
-            </HBox>
+            <!-- Materials Section -->
+            <VBox spacing="8" style="-fx-background-color: white; -fx-border-color: #ddd; -fx-border-width: 1; -fx-padding: 15; -fx-border-radius: 5;">
+                <VBox fx:id="materialsContainer" spacing="8">
+                    <Label text="📚 Session Materials"
+                           style="-fx-font-size: 13; -fx-font-weight: bold; -fx-text-fill: #2c3e50;"/>
+                    <Label text="ℹ️ Materials will appear here for selected event"
+                           style="-fx-font-size: 11; -fx-text-fill: #999;"/>
+                </VBox>
+            </VBox>
 
         </VBox>
     </center>
@@ -75,11 +73,11 @@
         <VBox spacing="10" style="-fx-padding: 15; -fx-background-color: #f8f9fa; -fx-border-color: #ddd; -fx-border-width: 1 0 0 0;">
             <HBox spacing="10">
                 <Button text="← Back to Dashboard"
-                        style="-fx-padding: 10; -fx-font-size: 12; -fx-cursor: hand;"
+                        style="-fx-padding: 10 20; -fx-font-size: 12; -fx-cursor: hand; -fx-background-color: #2c3e50; -fx-text-fill: white;"
                         onAction="#onBack"/>
                 <Region HBox.hgrow="ALWAYS"/>
             </HBox>
-            <Label text="💡 Tip: Select multiple sessions from the same event. Sessions will be shown after you select an event. Click 'Save Registration' when done."
+            <Label text="💡 Tip: Click 'Register' to join a session or 'Cancel' to remove your registration. View or download materials directly from the table."
                    style="-fx-font-size: 10; -fx-text-fill: #666; -fx-wrap-text: true;"/>
         </VBox>
     </bottom>

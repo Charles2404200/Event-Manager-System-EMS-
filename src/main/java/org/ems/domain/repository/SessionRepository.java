@@ -16,6 +16,12 @@ public interface SessionRepository {
 
     List<Session> findAll();
 
+    /**
+     * Find all sessions with optimized presenter loading (batch query instead of N+1)
+     * ⚡ Much faster for large datasets
+     */
+    List<Session> findAllOptimized();
+
     List<Session> findByEvent(UUID eventId);
 
     List<Session> findByDate(LocalDate date);

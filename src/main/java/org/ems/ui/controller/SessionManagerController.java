@@ -76,12 +76,19 @@ public class SessionManagerController {
             }
         });
 
-        // Load data asynchronously
-        asyncLoader.preloadPresentersAsync(() -> {
-            System.out.println("  ✓ Presenters pre-loaded");
-        });
+        // ⚡ OPTIMIZATION: Try to use cached data first for instant display
+        List<Session> cachedSessions = cacheManager.getSessions();
+        if (cachedSessions != null && cacheManager.isSessionsCacheValid()) {
+            System.out.println("⚡ [Init] Using cached sessions for instant display");
+            paginationManager.initializePagination(cachedSessions);
+            displaySessionsPage();
+            if (sessionCountLabel != null) {
+                sessionCountLabel.setText("Total Sessions: " + cachedSessions.size());
+            }
+        }
 
-        loadSessionsAsync();
+        // Load data asynchronously (parallel: sessions + events + presenters)
+        loadSessionsAndEventsParallel();
 
         System.out.println("  ✓ initialize() completed in " + (System.currentTimeMillis() - initStart) + " ms");
     }
@@ -100,13 +107,17 @@ public class SessionManagerController {
     }
 
     /**
-     * Async load sessions - delegated to asyncLoader
+     * ⚡ Load sessions and events in PARALLEL (faster than sequential)
      */
-    private void loadSessionsAsync() {
+    private void loadSessionsAndEventsParallel() {
         long mainStart = System.currentTimeMillis();
-        System.out.println("📋 [SessionManager] Loading sessions asynchronously...");
+        System.out.println("⚡ [SessionManager] Loading sessions & events in PARALLEL...");
 
+        // Start both loads at the same time
         asyncLoader.loadSessionsAsync(sessions -> {
+            // Update cache
+            cacheManager.setSessions(sessions);
+
             // On success: initialize pagination and display sessions
             paginationManager.initializePagination(sessions);
             displaySessionsPage();
@@ -115,20 +126,45 @@ public class SessionManagerController {
                 sessionCountLabel.setText("Total Sessions: " + sessions.size());
             }
 
-            // Load events in background after displaying sessions
-            asyncLoader.loadEventsAsync(events -> {
-                tableManager.setupEventNameMapping();
-                System.out.println("✓ Events loaded and table updated");
-            }, ex -> {
-                System.err.println("✗ Error loading events: " + ex.getMessage());
-            });
-
             System.out.println("✓ Sessions loaded in " + (System.currentTimeMillis() - mainStart) + " ms");
         }, ex -> {
             System.err.println("✗ Error loading sessions: " + ex.getMessage());
             showError("Error loading sessions", ex.getMessage());
         });
+
+        // Load events at same time (parallel)
+        asyncLoader.loadEventsAsync(events -> {
+            cacheManager.setEvents(events);
+            tableManager.setupEventNameMapping();
+            System.out.println("✓ Events loaded in " + (System.currentTimeMillis() - mainStart) + " ms");
+        }, ex -> {
+            System.err.println("✗ Error loading events: " + ex.getMessage());
+        });
+
+        // Lazy load presenters in background (only when needed)
+        lazyLoadPresentersInBackground();
     }
+
+    /**
+     * ⚡ Lazy load presenters only when needed (on first detail view)
+     */
+    private void lazyLoadPresentersInBackground() {
+        Thread lazyLoaderThread = new Thread(() -> {
+            try {
+                Thread.sleep(500); // Small delay to let UI settle
+                long start = System.currentTimeMillis();
+                presenterManager.getAllPresentersAsMap();
+                System.out.println("✓ Presenters pre-loaded in background: " +
+                    (System.currentTimeMillis() - start) + " ms");
+            } catch (Exception e) {
+                System.err.println("⚠️ Background presenter load failed: " + e.getMessage());
+            }
+        }, "lazy-presenter-loader");
+        lazyLoaderThread.setDaemon(true);
+        lazyLoaderThread.start();
+    }
+
+
 
     /**
      * Display current page from pagination manager
@@ -161,13 +197,34 @@ public class SessionManagerController {
 
     @FXML
     public void onRefresh() {
+        long refreshStart = System.currentTimeMillis();
+        System.out.println("🔄 [onRefresh] Refreshing session data...");
+
         paginationManager.reset();
+
+        // ⚡ OPTIMIZATION: Use cache check - only reload if cache expired
+        boolean sessionsCacheValid = cacheManager.isSessionsCacheValid();
+        boolean eventsCacheValid = cacheManager.isEventsCacheValid();
+
+        if (sessionsCacheValid && eventsCacheValid) {
+            System.out.println("⚡ [Refresh] Cache still valid - skipping database query");
+            List<Session> cachedSessions = cacheManager.getSessions();
+            paginationManager.initializePagination(cachedSessions);
+            displaySessionsPage();
+            System.out.println("✓ Refresh completed in " + (System.currentTimeMillis() - refreshStart) + " ms");
+            return;
+        }
+
+        // Cache expired - reload from database
+        System.out.println("📊 [Refresh] Cache expired - reloading from database");
         cacheManager.clearAll();
         presenterManager.clearCache();
         eventManager.clearCache();
-        loadSessionsAsync();
+        loadSessionsAndEventsParallel();
+
         selectedSession = null;
         clearDetails();
+        System.out.println("✓ Full refresh completed in " + (System.currentTimeMillis() - refreshStart) + " ms");
     }
 
     private void clearDetails() {
@@ -224,7 +281,7 @@ public class SessionManagerController {
             try {
                 sessionService.createSession(s);
                 showInfo("Success", "Session created successfully!");
-                loadSessionsAsync();
+                loadSessionsAndEventsParallel();
             } catch (Exception e) {
                 showError("Creation Error", e.getMessage());
             }
@@ -250,7 +307,7 @@ public class SessionManagerController {
             try {
                 sessionService.updateSession(s);
                 showInfo("Success", "Session updated successfully!");
-                loadSessionsAsync();
+                loadSessionsAndEventsParallel();
             } catch (Exception e) {
                 showError("Update Error", e.getMessage());
             }
@@ -273,7 +330,7 @@ public class SessionManagerController {
             try {
                 sessionService.deleteSession(selectedSession.getId());
                 showInfo("Success", "Session deleted successfully!");
-                loadSessionsAsync();
+                loadSessionsAndEventsParallel();
                 clearDetails();
                 selectedSession = null;
             } catch (Exception e) {
@@ -312,6 +369,146 @@ public class SessionManagerController {
                 showError("Error", e.getMessage());
             }
         });
+    }
+
+    @FXML
+    public void onUploadMaterial() {
+        long uploadStart = System.currentTimeMillis();
+        System.out.println("📤 [onUploadMaterial] Upload material clicked");
+
+        // Check if session is selected
+        if (selectedSession == null) {
+            showWarning("No Selection", "Please select a session to upload material!");
+            return;
+        }
+
+        System.out.println("  ✓ Selected session: " + selectedSession.getTitle());
+
+        // Step 1: Prompt for file selection
+        String filePath = promptForMaterialFile();
+        if (filePath == null) {
+            System.out.println("  ⚠️ Material file selection cancelled");
+            return;
+        }
+        System.out.println("  ✓ Selected file: " + filePath);
+
+        // Step 2: Show loading dialog
+        javafx.stage.Stage primaryStage = null;
+        try {
+            if (sessionTable != null && sessionTable.getScene() != null) {
+                primaryStage = (javafx.stage.Stage) sessionTable.getScene().getWindow();
+            }
+        } catch (Exception e) {
+            System.err.println("Could not get primary stage: " + e.getMessage());
+        }
+
+        LoadingDialog uploadDialog = null;
+        if (primaryStage != null) {
+            uploadDialog = new LoadingDialog(primaryStage, "Uploading material to Cloudflare R2...");
+            uploadDialog.show();
+        }
+
+        // Step 3: Upload material asynchronously
+        final LoadingDialog finalUploadDialog = uploadDialog;
+        final String sessionId = selectedSession.getId().toString();
+        AsyncTaskService.runAsync(
+                // Background task
+                () -> {
+                    long taskStart = System.currentTimeMillis();
+                    try {
+                        System.out.println("  🔄 [Background] Uploading material to session: " + selectedSession.getTitle());
+                        String materialPath = uploadSessionMaterial(sessionId, filePath);
+                        System.out.println("  ✓ Material uploaded in " + (System.currentTimeMillis() - taskStart) + "ms");
+                        System.out.println("  ✓ Material path: " + materialPath);
+                        return materialPath;
+                    } catch (Exception e) {
+                        System.err.println("  ✗ Upload error: " + e.getMessage());
+                        throw new RuntimeException(e);
+                    }
+                },
+
+                // Success callback
+                result -> {
+                    if (finalUploadDialog != null) {
+                        finalUploadDialog.close();
+                    }
+                    System.out.println("✓ Upload completed in " + (System.currentTimeMillis() - uploadStart) + "ms");
+                    showInfo("Material uploaded successfully!",
+                            "Your material has been saved to session: " + selectedSession.getTitle() +
+                            "\n\nPath: " + result);
+                    displaySessionDetails(selectedSession);
+                },
+
+                // Error callback
+                error -> {
+                    if (finalUploadDialog != null) {
+                        finalUploadDialog.close();
+                    }
+                    System.err.println("✗ Upload failed: " + error.getMessage());
+                    showError("Upload Failed",
+                            "Failed to upload material:\n\n" + error.getMessage());
+                }
+        );
+    }
+
+    /**
+     * Upload session material and save to database
+     * @param sessionId Session ID
+     * @param filePath Path to material file
+     * @return Material path
+     */
+    private String uploadSessionMaterial(String sessionId, String filePath) throws Exception {
+        // Use ImageService to upload to Cloudflare R2
+        org.ems.application.service.ImageService imageService =
+            new org.ems.application.impl.ImageServiceImpl();
+        java.util.UUID sessionUUID = java.util.UUID.fromString(sessionId);
+        String materialPath = imageService.uploadSessionMaterial(filePath, sessionUUID);
+
+        if (materialPath == null) {
+            throw new Exception("Material upload failed");
+        }
+
+        // Get session and update material_path
+        Session session = AppContext.get().sessionRepo.findById(sessionUUID);
+        if (session == null) {
+            throw new Exception("Session not found");
+        }
+
+        session.setMaterialPath(materialPath);
+        AppContext.get().sessionRepo.save(session);
+
+        System.out.println("  ✓ Material path saved to database: " + materialPath);
+        return materialPath;
+    }
+
+    /**
+     * Open file chooser to select material file
+     * @return File path or null if cancelled
+     */
+    private String promptForMaterialFile() {
+        try {
+            javafx.stage.Stage stage = (javafx.stage.Stage) sessionTable.getScene().getWindow();
+            javafx.stage.FileChooser fileChooser = new javafx.stage.FileChooser();
+            fileChooser.setTitle("Select material to upload");
+
+            // Add file type filters
+            fileChooser.getExtensionFilters().addAll(
+                    new javafx.stage.FileChooser.ExtensionFilter("PDF", "*.pdf"),
+                    new javafx.stage.FileChooser.ExtensionFilter("PowerPoint", "*.ppt", "*.pptx"),
+                    new javafx.stage.FileChooser.ExtensionFilter("Word", "*.doc", "*.docx"),
+                    new javafx.stage.FileChooser.ExtensionFilter("Excel", "*.xls", "*.xlsx"),
+                    new javafx.stage.FileChooser.ExtensionFilter("Text", "*.txt"),
+                    new javafx.stage.FileChooser.ExtensionFilter("All Files", "*.*")
+            );
+
+            java.io.File selectedFile = fileChooser.showOpenDialog(stage);
+            if (selectedFile != null) {
+                return selectedFile.getAbsolutePath();
+            }
+        } catch (Exception e) {
+            System.err.println("Cannot select file: " + e.getMessage());
+        }
+        return null;
     }
 
     @FXML
