@@ -39,6 +39,7 @@
                     <Button text="✏️ Update" prefWidth="100" style="-fx-padding: 10; -fx-font-size: 12; -fx-cursor: hand;" onAction="#onUpdateSession"/>
                     <Button text="🗑️ Delete" prefWidth="100" style="-fx-padding: 10; -fx-font-size: 12; -fx-cursor: hand; -fx-text-fill: white; -fx-background-color: #e74c3c;" onAction="#onDeleteSession"/>
                     <Button text="↻ Refresh" prefWidth="100" style="-fx-padding: 10; -fx-font-size: 12; -fx-cursor: hand;" onAction="#onRefresh"/>
+                    <Button text="📁 Upload Material" prefWidth="150" style="-fx-padding: 10; -fx-font-size: 12; -fx-cursor: hand; -fx-text-fill: white; -fx-background-color: #8e44ad;" onAction="#onUploadMaterial"/>
                 </HBox>
 
                 <TableView fx:id="sessionTable" prefHeight="500" VBox.vgrow="ALWAYS">

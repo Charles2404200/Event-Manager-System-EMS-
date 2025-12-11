@@ -58,4 +58,14 @@ public interface SessionRepository {
      * Get all sessions registered for an attendee
      */
     List<Session> findSessionsForAttendee(UUID attendeeId);
+
+    /**
+     * Find all sessions that an attendee has registered for in a specific event
+     */
+    List<Session> findSessionsByAttendeeAndEvent(UUID attendeeId, UUID eventId);
+
+    /**
+     * Cancel an attendee's registration for a session
+     */
+    void cancelAttendeeSession(UUID attendeeId, UUID sessionId);
 }

@@ -9,59 +9,106 @@ import javafx.scene.control.*;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.stage.FileChooser;
 import org.ems.config.AppContext;
-import org.ems.domain.model.ActivityLog;
-import org.ems.domain.repository.ActivityLogRepository;
 import org.ems.ui.stage.FxUtils;
 import org.ems.ui.stage.SceneManager;
+import org.ems.application.dto.ActivityLogDisplayDTO;
+import org.ems.application.service.ActivityLogDataLoaderService;
+import org.ems.application.service.ActivityLogFilterService;
+import org.ems.application.service.ActivityLogStatisticsService;
+import org.ems.application.service.ActivityLogExportService;
+import org.ems.application.service.ActivityLogPaginationService;
 
 import java.io.File;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Activity Logs Controller - SOLID REFACTORED
+ * - Single Responsibility: UI coordination only
+ * - Dependency Injection: Services injected via constructor
+ * - Delegation: Business logic delegated to services
+ * - Clean Architecture: Separated concerns between UI, Services, and Data layers
+ * @author <your group number>
+ */
 public class ActivityLogsController {
 
-    @FXML private TableView<ActivityLogRow> logsTable;
+    @FXML private TableView<ActivityLogDisplayDTO> logsTable;
     @FXML private Label totalLogsLabel;
     @FXML private Label lastActivityLabel;
     @FXML private TextField searchField;
     @FXML private ComboBox<String> actionFilterCombo;
     @FXML private Label pageLabel;
 
-    private ActivityLogRepository activityLogRepo;
-    private static final int PAGE_SIZE = 20;
+    private List<ActivityLogDisplayDTO> allLogs = new ArrayList<>();
+    private List<ActivityLogDisplayDTO> currentFilteredLogs = new ArrayList<>();
     private int currentPage = 0;
     private int totalPages = 1;
-    private List<ActivityLogRow> allLogs = new ArrayList<>();
+
+    // Injected Services
+    private ActivityLogDataLoaderService dataLoaderService;
+    private ActivityLogFilterService filterService;
+    private ActivityLogStatisticsService statisticsService;
+    private ActivityLogExportService exportService;
+    private ActivityLogPaginationService paginationService;
 
     @FXML
     public void initialize() {
+        long initStart = System.currentTimeMillis();
+        System.out.println("📊 [ActivityLogsController] initialize() starting...");
         try {
             AppContext context = AppContext.get();
-            activityLogRepo = context.activityLogRepo;
 
+            // Inject services
+            long serviceStart = System.currentTimeMillis();
+            dataLoaderService = new ActivityLogDataLoaderService(context.activityLogRepo);
+            filterService = new ActivityLogFilterService();
+            statisticsService = new ActivityLogStatisticsService();
+            exportService = new ActivityLogExportService();
+            paginationService = new ActivityLogPaginationService(20);
+            System.out.println("  ✓ Services initialized in " + (System.currentTimeMillis() - serviceStart) + "ms");
+
+            // Setup table columns
+            long colStart = System.currentTimeMillis();
             setupTableColumns();
+            System.out.println("  ✓ Table columns setup in " + (System.currentTimeMillis() - colStart) + "ms");
+
+            // Setup filters
+            long filterStart = System.currentTimeMillis();
             setupFilters();
+            System.out.println("  ✓ Filters setup in " + (System.currentTimeMillis() - filterStart) + "ms");
+
+            System.out.println("  ✓ UI initialized in " + (System.currentTimeMillis() - initStart) + "ms");
+            System.out.println("  🔄 Starting async load...");
+
+            // Load logs asynchronously
             loadActivityLogsAsync();
+
         } catch (Exception e) {
-            System.err.println("Error initializing activity logs: " + e.getMessage());
+            System.err.println("✗ initialize() failed: " + e.getMessage());
             e.printStackTrace();
         }
     }
 
+    /**
+     * Setup table columns with proper binding to ActivityLogDisplayDTO
+     */
     private void setupTableColumns() {
         if (logsTable.getColumns().size() >= 5) {
-            ((TableColumn<ActivityLogRow, String>) logsTable.getColumns().get(0))
-                    .setCellValueFactory(new PropertyValueFactory<>("timestamp"));
-            ((TableColumn<ActivityLogRow, String>) logsTable.getColumns().get(1))
-                    .setCellValueFactory(new PropertyValueFactory<>("userId"));
-            ((TableColumn<ActivityLogRow, String>) logsTable.getColumns().get(2))
-                    .setCellValueFactory(new PropertyValueFactory<>("action"));
-            ((TableColumn<ActivityLogRow, String>) logsTable.getColumns().get(3))
-                    .setCellValueFactory(new PropertyValueFactory<>("resource"));
-            ((TableColumn<ActivityLogRow, String>) logsTable.getColumns().get(4))
-                    .setCellValueFactory(new PropertyValueFactory<>("description"));
+            ((TableColumn<ActivityLogDisplayDTO, String>) logsTable.getColumns().get(0))
+                    .setCellValueFactory(cellData ->
+                        new javafx.beans.property.SimpleStringProperty(cellData.getValue().getTimestamp()));
+            ((TableColumn<ActivityLogDisplayDTO, String>) logsTable.getColumns().get(1))
+                    .setCellValueFactory(cellData ->
+                        new javafx.beans.property.SimpleStringProperty(cellData.getValue().getUserId()));
+            ((TableColumn<ActivityLogDisplayDTO, String>) logsTable.getColumns().get(2))
+                    .setCellValueFactory(cellData ->
+                        new javafx.beans.property.SimpleStringProperty(cellData.getValue().getAction()));
+            ((TableColumn<ActivityLogDisplayDTO, String>) logsTable.getColumns().get(3))
+                    .setCellValueFactory(cellData ->
+                        new javafx.beans.property.SimpleStringProperty(cellData.getValue().getResource()));
+            ((TableColumn<ActivityLogDisplayDTO, String>) logsTable.getColumns().get(4))
+                    .setCellValueFactory(cellData ->
+                        new javafx.beans.property.SimpleStringProperty(cellData.getValue().getDescription()));
         }
     }
 
@@ -79,53 +126,36 @@ public class ActivityLogsController {
         actionFilterCombo.setValue("All Actions");
     }
 
+    /**
+     * Load activity logs asynchronously via ActivityLogDataLoaderService
+     */
     private void loadActivityLogsAsync() {
-        Task<Void> task = new Task<>() {
+        Task<List<ActivityLogDisplayDTO>> task = new Task<>() {
             @Override
-            protected Void call() {
+            protected List<ActivityLogDisplayDTO> call() {
                 long start = System.currentTimeMillis();
+                System.out.println("    🔄 [Background] Loading activity logs...");
                 try {
-                    System.out.println("[ActivityLogsController] activityLogRepo = " + (activityLogRepo != null ? "OK" : "NULL"));
-
-                    if (activityLogRepo != null) {
-                        List<ActivityLog> logs = activityLogRepo.findAll();
-                        System.out.println("[ActivityLogsController] Fetched " + logs.size() + " logs from DB");
-
-                        allLogs.clear();
-
-                        for (ActivityLog log : logs) {
-                            ActivityLogRow row = new ActivityLogRow(
-                                    log.getTimestamp().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")),
-                                    log.getUserId(),
-                                    log.getAction(),
-                                    log.getResource(),
-                                    log.getDescription()
-                            );
-                            allLogs.add(row);
-                            System.out.println("[ActivityLogsController] Added log: " + log.getAction() + " - " + log.getDescription());
-                        }
-
-                        System.out.println("[ActivityLogsController] Loaded " + allLogs.size() + " logs in " +
-                                (System.currentTimeMillis() - start) + " ms");
-                    } else {
-                        System.err.println("[ActivityLogsController] ERROR: activityLogRepo is NULL!");
-                    }
-                } catch (Exception e) {
-                    System.err.println("Error loading activity logs: " + e.getMessage());
-                    e.printStackTrace();
+                    // Delegate to service - all loading and conversion logic
+                    return dataLoaderService.loadAllLogs();
+                } catch (ActivityLogDataLoaderService.ActivityLogException e) {
+                    System.err.println("    ✗ Error loading logs: " + e.getMessage());
+                    return new ArrayList<>();
                 }
-                return null;
             }
         };
 
         task.setOnSucceeded(evt -> {
-            System.out.println("[ActivityLogsController] Task succeeded, allLogs size = " + allLogs.size());
+            long uiStart = System.currentTimeMillis();
+            allLogs = task.getValue();
             displayLogs(allLogs);
             updateStats();
+            System.out.println("  ✓ UI updated in " + (System.currentTimeMillis() - uiStart) + "ms");
+            System.out.println("✓ Activity logs loaded successfully");
         });
 
         task.setOnFailed(evt -> {
-            System.err.println("Failed to load activity logs");
+            System.err.println("✗ Failed to load activity logs");
             showAlert("Error", "Failed to load activity logs");
         });
 
@@ -135,85 +165,103 @@ public class ActivityLogsController {
     }
 
 
-    private void displayLogs(List<ActivityLogRow> logs) {
-        totalPages = Math.max(1, (int) Math.ceil(logs.size() / (double) PAGE_SIZE));
-        int start = currentPage * PAGE_SIZE;
-        int end = Math.min(start + PAGE_SIZE, logs.size());
+    /**
+     * Display logs on current page
+     */
+    private void displayLogs(List<ActivityLogDisplayDTO> logs) {
+        currentFilteredLogs = logs;
+        totalPages = paginationService.getTotalPages(logs.size());
+        currentPage = 0;
 
-        List<ActivityLogRow> pageData = new ArrayList<>();
-        if (start < logs.size()) {
-            pageData.addAll(logs.subList(start, end));
-        }
-
+        List<ActivityLogDisplayDTO> pageData = paginationService.getPage(logs, currentPage);
         logsTable.setItems(FXCollections.observableArrayList(pageData));
-        pageLabel.setText("Page " + (currentPage + 1) + " / " + totalPages);
+        pageLabel.setText(paginationService.getPageLabel(currentPage, totalPages));
     }
 
+    /**
+     * Update statistics via ActivityLogStatisticsService
+     */
     private void updateStats() {
-        totalLogsLabel.setText(String.valueOf(allLogs.size()));
+        int totalLogs = statisticsService.getTotalCount(allLogs);
+        String lastActivity = statisticsService.getLastActivityTimestamp(allLogs);
 
-        if (!allLogs.isEmpty()) {
-            lastActivityLabel.setText(allLogs.get(0).getTimestamp());
-        } else {
-            lastActivityLabel.setText("No activity");
-        }
+        totalLogsLabel.setText(String.valueOf(totalLogs));
+        lastActivityLabel.setText(lastActivity);
     }
 
+    /**
+     * Handle search filter
+     * Delegates filtering logic to ActivityLogFilterService
+     */
     @FXML
     public void onSearch() {
-        String query = searchField.getText().toLowerCase();
-        List<ActivityLogRow> filtered = new ArrayList<>();
+        long searchStart = System.currentTimeMillis();
+        System.out.println("🔎 [ActivityLogsController] onSearch() starting...");
+        try {
+            String searchTerm = searchField.getText();
+            List<ActivityLogDisplayDTO> filtered = filterService.filterBySearchTerm(allLogs, searchTerm);
 
-        for (ActivityLogRow log : allLogs) {
-            if (log.getUserId().toLowerCase().contains(query) ||
-                log.getAction().toLowerCase().contains(query) ||
-                log.getResource().toLowerCase().contains(query) ||
-                log.getDescription().toLowerCase().contains(query)) {
-                filtered.add(log);
-            }
+            displayLogs(filtered);
+            System.out.println("  ✓ onSearch() completed in " + (System.currentTimeMillis() - searchStart) + "ms");
+        } catch (Exception e) {
+            showAlert("Error", "Search failed: " + e.getMessage());
         }
-
-        currentPage = 0;
-        displayLogs(filtered);
     }
 
+    /**
+     * Handle filter by action
+     * Delegates filtering logic to ActivityLogFilterService
+     */
     @FXML
     public void onFilterByAction() {
-        String selectedAction = actionFilterCombo.getValue();
-        List<ActivityLogRow> filtered = new ArrayList<>();
+        long filterStart = System.currentTimeMillis();
+        System.out.println("🔎 [ActivityLogsController] onFilterByAction() starting...");
+        try {
+            String selectedAction = actionFilterCombo.getValue();
+            List<ActivityLogDisplayDTO> filtered = filterService.filterByAction(allLogs, selectedAction);
 
-        if ("All Actions".equals(selectedAction)) {
-            filtered.addAll(allLogs);
-        } else {
-            for (ActivityLogRow log : allLogs) {
-                if (log.getAction().equals(selectedAction)) {
-                    filtered.add(log);
-                }
-            }
+            displayLogs(filtered);
+            System.out.println("  ✓ onFilterByAction() completed in " + (System.currentTimeMillis() - filterStart) + "ms");
+        } catch (Exception e) {
+            showAlert("Error", "Filter failed: " + e.getMessage());
         }
-
-        currentPage = 0;
-        displayLogs(filtered);
     }
 
+    /**
+     * Handle previous page button
+     */
     @FXML
     public void onPrevPage() {
-        if (currentPage > 0) {
+        if (paginationService.canGoPreviousPage(currentPage)) {
             currentPage--;
-            displayLogs(allLogs);
+            List<ActivityLogDisplayDTO> pageData = paginationService.getPage(currentFilteredLogs, currentPage);
+            logsTable.setItems(FXCollections.observableArrayList(pageData));
+            pageLabel.setText(paginationService.getPageLabel(currentPage, totalPages));
         }
     }
 
+    /**
+     * Handle next page button
+     */
     @FXML
     public void onNextPage() {
-        if (currentPage + 1 < totalPages) {
+        if (paginationService.canGoNextPage(currentPage, totalPages)) {
             currentPage++;
-            displayLogs(allLogs);
+            List<ActivityLogDisplayDTO> pageData = paginationService.getPage(currentFilteredLogs, currentPage);
+            logsTable.setItems(FXCollections.observableArrayList(pageData));
+            pageLabel.setText(paginationService.getPageLabel(currentPage, totalPages));
         }
     }
 
+    /**
+     * Handle export logs button
+     * Delegates CSV generation to ActivityLogExportService
+     */
     @FXML
     public void onExportLogs() {
+        long exportStart = System.currentTimeMillis();
+        System.out.println("📤 [ActivityLogsController] onExportLogs() starting...");
+
         if (allLogs.isEmpty()) {
             showAlert("Info", "No logs to export");
             return;
@@ -221,7 +269,7 @@ public class ActivityLogsController {
 
         FileChooser fileChooser = new FileChooser();
         fileChooser.setTitle("Export Activity Logs");
-        fileChooser.setInitialFileName(FxUtils.generateFileName("activity_logs", "csv"));
+        fileChooser.setInitialFileName(exportService.generateFilename());
         fileChooser.getExtensionFilters().addAll(
                 new FileChooser.ExtensionFilter("CSV Files", "*.csv"),
                 new FileChooser.ExtensionFilter("All Files", "*.*")
@@ -233,19 +281,12 @@ public class ActivityLogsController {
                 @Override
                 protected Boolean call() {
                     try {
-                        List<String[]> data = new ArrayList<>();
-                        for (ActivityLogRow log : allLogs) {
-                            data.add(new String[]{
-                                    log.getTimestamp(),
-                                    log.getUserId(),
-                                    log.getAction(),
-                                    log.getResource(),
-                                    log.getDescription()
-                            });
-                        }
+                        // Delegate to service for CSV conversion
+                        String[][] data = exportService.convertToCSVData(allLogs);
+                        String[] headers = exportService.getCSVHeaders();
 
-                        String[] headers = {"Timestamp", "User ID", "Action", "Resource", "Description"};
-                        return FxUtils.exportToCSV(selectedFile.getAbsolutePath(), data, headers);
+                        return FxUtils.exportToCSV(selectedFile.getAbsolutePath(),
+                                java.util.Arrays.asList(data).subList(1, data.length), headers);
                     } catch (Exception e) {
                         System.err.println("Export error: " + e.getMessage());
                         return false;
@@ -259,6 +300,7 @@ public class ActivityLogsController {
                 } else {
                     showAlert("Error", "Failed to export logs");
                 }
+                System.out.println("  ✓ onExportLogs() completed in " + (System.currentTimeMillis() - exportStart) + "ms");
             });
 
             Thread t = new Thread(exportTask, "activity-logs-exporter");
@@ -267,6 +309,9 @@ public class ActivityLogsController {
         }
     }
 
+    /**
+     * Handle clear logs button
+     */
     @FXML
     public void onClearLogs() {
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
@@ -278,8 +323,10 @@ public class ActivityLogsController {
                 @Override
                 protected Void call() {
                     try {
-                        if (activityLogRepo != null) {
-                            activityLogRepo.deleteAll();
+                        // Clear logs via repository (if available)
+                        AppContext context = AppContext.get();
+                        if (context.activityLogRepo != null) {
+                            context.activityLogRepo.deleteAll();
                         }
                     } catch (Exception e) {
                         System.err.println("Error clearing logs: " + e.getMessage());
@@ -306,33 +353,14 @@ public class ActivityLogsController {
         SceneManager.switchTo("admin_dashboard.fxml", "Event Manager System - Admin Dashboard");
     }
 
+    /**
+     * Show alert dialog to user
+     */
     private void showAlert(String title, String message) {
         Alert alert = new Alert(Alert.AlertType.INFORMATION);
         alert.setTitle(title);
         alert.setContentText(message);
         alert.showAndWait();
-    }
-
-    public static class ActivityLogRow {
-        private String timestamp;
-        private String userId;
-        private String action;
-        private String resource;
-        private String description;
-
-        public ActivityLogRow(String timestamp, String userId, String action, String resource, String description) {
-            this.timestamp = timestamp;
-            this.userId = userId;
-            this.action = action;
-            this.resource = resource;
-            this.description = description;
-        }
-
-        public String getTimestamp() { return timestamp; }
-        public String getUserId() { return userId; }
-        public String getAction() { return action; }
-        public String getResource() { return resource; }
-        public String getDescription() { return description; }
     }
 }
 

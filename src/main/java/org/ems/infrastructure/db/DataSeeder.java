@@ -14,24 +14,115 @@ import java.util.UUID;
 public class DataSeeder {
 
     public static void main(String[] args) {
-        System.out.println("\n╔════════════════════════════════════════╗");
-        System.out.println("║   Event Manager System - Data Seeder   ║");
-        System.out.println("╚════════════════════════════════════════╝\n");
+        System.out.println("\n╔════════════════════════════════════════════════════╗");
+        System.out.println("║   Event Manager System - Data Seeder                ║");
+        System.out.println("║                                                    ║");
+        System.out.println("║   This program will:                               ║");
+        System.out.println("║   1. Initialize database schema                    ║");
+        System.out.println("║   2. Seed admin user                               ║");
+        System.out.println("║   3. Seed sample data (events, attendees, etc.)   ║");
+        System.out.println("╚════════════════════════════════════════════════════╝\n");
 
-        seedAdminUser();
-        seedSampleData();
+        try {
+            // Step 1: Initialize database schema
+            System.out.println("📋 Step 1: Initializing Database Schema...");
+            initializeSchema();
+            System.out.println("✓ Schema initialized successfully!\n");
 
-        System.out.println("\n✅ Data seeding completed successfully!\n");
+            // Step 2: Seed admin user
+            System.out.println("👤 Step 2: Seeding Admin User...");
+            seedAdminUser();
+            System.out.println("✓ Admin user seeded!\n");
+
+            // Step 3: Seed sample data
+            System.out.println("📊 Step 3: Seeding Sample Data...");
+            seedSampleData();
+            System.out.println("✓ Sample data seeded!\n");
+
+            System.out.println("╔════════════════════════════════════════════════════╗");
+            System.out.println("║  ✅ DATA SEEDING COMPLETED SUCCESSFULLY!          ║");
+            System.out.println("╚════════════════════════════════════════════════════╝\n");
+            System.out.println("You can now run MainApp.java to start the application.\n");
+
+        } catch (Exception e) {
+            System.err.println("\n╔════════════════════════════════════════════════════╗");
+            System.err.println("║  ❌ ERROR DURING SEEDING                           ║");
+            System.err.println("╠════════════════════════════════════════════════════╣");
+            System.err.println("║  " + e.getMessage());
+            System.err.println("╚════════════════════════════════════════════════════╝\n");
+            e.printStackTrace();
+            System.exit(1);
+        }
+    }
+
+    /**
+     * Initialize database schema from schema.sql
+     */
+    private static void initializeSchema() {
+        try (Connection conn = DatabaseConfig.getConnection()) {
+            // Load schema.sql from resources
+            try (java.io.InputStream in = DataSeeder.class.getClassLoader()
+                    .getResourceAsStream("db/schema.sql")) {
+                if (in == null) {
+                    throw new RuntimeException("schema.sql not found in resources");
+                }
+                String sql = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+
+                // Split by semicolon and execute each statement separately
+                String[] statements = sql.split(";");
+                int successCount = 0;
+
+                try (java.sql.Statement st = conn.createStatement()) {
+                    for (String statement : statements) {
+                        String trimmed = statement.trim();
+                        if (trimmed.isEmpty()) {
+                            continue;
+                        }
+                        try {
+                            st.execute(trimmed);
+                            successCount++;
+                        } catch (Exception e) {
+                            // Skip statements that fail (e.g., IF NOT EXISTS)
+                            System.out.println("  ⚠ Statement skipped: " + trimmed.substring(0, Math.min(40, trimmed.length())) + "...");
+                        }
+                    }
+                }
+                System.out.println("  ✓ Executed " + successCount + " schema statements");
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to initialize schema: " + e.getMessage(), e);
+        }
     }
 
     public static void seedAdminUser() {
         try (Connection conn = DatabaseConfig.getConnection()) {
+            // Check if persons table exists
+            String tableCheckQuery = """
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.tables 
+                        WHERE table_name = 'persons'
+                    )
+                    """;
+
+            boolean tableExists = false;
+            try (PreparedStatement checkTable = conn.prepareStatement(tableCheckQuery)) {
+                ResultSet rs = checkTable.executeQuery();
+                if (rs.next()) {
+                    tableExists = rs.getBoolean(1);
+                }
+            }
+
+            if (!tableExists) {
+                System.out.println("⚠ Persons table does not exist yet - waiting for schema initialization...");
+                return;
+            }
+
             // Check if admin already exists
             String checkQuery = "SELECT id FROM persons WHERE username = 'admin' LIMIT 1";
             try (PreparedStatement checkStmt = conn.prepareStatement(checkQuery)) {
                 ResultSet rs = checkStmt.executeQuery();
                 if (rs.next()) {
-                    System.out.println(" Admin user already exists, skipping seeding.");
+                    System.out.println("✓ Admin user already exists, skipping seeding.");
                     return;
                 }
             }
@@ -52,17 +143,28 @@ public class DataSeeder {
                 stmt.setString(8, "SYSTEM_ADMIN");
 
                 stmt.executeUpdate();
-                System.out.println(" Admin user seeded successfully!");
+                System.out.println("✓ Admin user seeded successfully!");
             }
 
         } catch (Exception e) {
-            System.err.println(" Error seeding admin user: " + e.getMessage());
+            System.err.println("⚠ Error seeding admin user: " + e.getMessage());
         }
     }
 
     public static void seedSampleData() {
         try (Connection conn = DatabaseConfig.getConnection()) {
             System.out.println("\n=== Starting Data Seeding ===\n");
+
+            // Ensure autocommit is enabled
+            conn.setAutoCommit(true);
+
+            // Check if required tables exist before seeding
+            String requiredTables = "persons, attendees, presenters, events, sessions, tickets";
+            if (!checkTablesExist(conn, "persons", "attendees", "presenters", "events", "sessions", "tickets")) {
+                System.out.println("⚠ Not all required tables exist yet. Seeding will be skipped.");
+                System.out.println("  Required tables: " + requiredTables);
+                return;
+            }
 
             // Seed Attendees
             seedAttendees(conn);
@@ -82,8 +184,32 @@ public class DataSeeder {
             System.out.println("\n=== Data Seeding Complete ===\n");
 
         } catch (Exception e) {
-            System.err.println(" Error seeding sample data: " + e.getMessage());
-            e.printStackTrace();
+            System.err.println("⚠ Error seeding sample data: " + e.getMessage());
+        }
+    }
+
+    private static boolean checkTablesExist(Connection conn, String... tableNames) {
+        try {
+            for (String tableName : tableNames) {
+                String query = """
+                        SELECT EXISTS (
+                            SELECT 1 FROM information_schema.tables 
+                            WHERE table_name = ?
+                        )
+                        """;
+                try (PreparedStatement stmt = conn.prepareStatement(query)) {
+                    stmt.setString(1, tableName);
+                    ResultSet rs = stmt.executeQuery();
+                    if (rs.next() && !rs.getBoolean(1)) {
+                        System.out.println("  ✗ Table '" + tableName + "' not found");
+                        return false;
+                    }
+                }
+            }
+            return true;
+        } catch (Exception e) {
+            System.err.println("⚠ Error checking tables: " + e.getMessage());
+            return false;
         }
     }
 
@@ -450,7 +576,7 @@ public class DataSeeder {
 
     private static void seedTickets(Connection conn) {
         try {
-            // Get attendee and session IDs
+            // Get attendee and event IDs
             String attendeesQuery = "SELECT id FROM attendees";
             java.util.List<UUID> attendeeIds = new java.util.ArrayList<>();
             try (PreparedStatement stmt = conn.prepareStatement(attendeesQuery)) {
@@ -460,35 +586,33 @@ public class DataSeeder {
                 }
             }
 
-            String sessionsQuery = "SELECT id, event_id FROM sessions";
-            java.util.List<Object[]> sessionIds = new java.util.ArrayList<>();
-            try (PreparedStatement stmt = conn.prepareStatement(sessionsQuery)) {
+            String eventsQuery = "SELECT id FROM events";
+            java.util.List<UUID> eventIds = new java.util.ArrayList<>();
+            try (PreparedStatement stmt = conn.prepareStatement(eventsQuery)) {
                 ResultSet rs = stmt.executeQuery();
                 while (rs.next()) {
-                    sessionIds.add(new Object[]{rs.getObject("id"), rs.getObject("event_id")});
+                    eventIds.add((UUID) rs.getObject("id"));
                 }
             }
 
-            if (attendeeIds.isEmpty() || sessionIds.isEmpty()) {
-                System.out.println(" No attendees or sessions found for seeding tickets");
+            if (attendeeIds.isEmpty() || eventIds.isEmpty()) {
+                System.out.println(" No attendees or events found for seeding tickets");
                 return;
             }
 
             String ticketQuery = """
-                    INSERT INTO tickets (id, attendee_id, event_id, session_id, type, price, status, payment_status, qr_code_data, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                    INSERT INTO tickets (id, attendee_id, event_id, type, price, status, payment_status, qr_code_data, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
                     """;
 
             String[] types = {"GENERAL", "VIP", "EARLY_BIRD", "STUDENT"};
             double[] prices = {50.0, 100.0, 30.0, 25.0};
 
             int ticketCount = 0;
-            // Create multiple tickets per attendee-session pair for realistic data
+            // Create multiple tickets per attendee-event pair for realistic data
             for (int i = 0; i < attendeeIds.size() * 30; i++) {
                 UUID attendeeId = attendeeIds.get(i % attendeeIds.size());
-                Object[] sessionData = sessionIds.get(i % sessionIds.size());
-                UUID sessionId = (UUID) sessionData[0];
-                UUID eventId = (UUID) sessionData[1];
+                UUID eventId = eventIds.get(i % eventIds.size());
 
                 String type = types[i % types.length];
                 double price = prices[i % prices.length];
@@ -498,12 +622,11 @@ public class DataSeeder {
                     stmt.setObject(1, UUID.randomUUID());
                     stmt.setObject(2, attendeeId);
                     stmt.setObject(3, eventId);
-                    stmt.setObject(4, sessionId);
-                    stmt.setString(5, type);
-                    stmt.setBigDecimal(6, new java.math.BigDecimal(price));
-                    stmt.setString(7, "ACTIVE");
-                    stmt.setString(8, "PAID");
-                    stmt.setString(9, qrCode);
+                    stmt.setString(4, type);
+                    stmt.setBigDecimal(5, new java.math.BigDecimal(price));
+                    stmt.setString(6, "ACTIVE");
+                    stmt.setString(7, "PAID");
+                    stmt.setString(8, qrCode);
                     int rows = stmt.executeUpdate();
                     if (rows > 0) ticketCount++;
                 }

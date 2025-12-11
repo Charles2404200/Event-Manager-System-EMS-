@@ -20,7 +20,7 @@ public class Session {
 
     // presenters
     private List<UUID> presenterIds = new ArrayList<>();
-    private List<String> materialPaths = new ArrayList<>();
+    private String materialPath;
 
     public Session() {
         this.id = UUID.randomUUID();
@@ -67,6 +67,6 @@ public class Session {
     public List<UUID> getPresenterIds() { return presenterIds; }
     public void addPresenter(UUID presenterId) { presenterIds.add(presenterId); }
 
-    public List<String> getMaterialPaths() { return materialPaths; }
-    public void addMaterial(String path) { materialPaths.add(path); }
+    public String getMaterialPath() { return materialPath; }
+    public void setMaterialPath(String materialPath) { this.materialPath = materialPath; }
 }

@@ -122,6 +122,7 @@ public class AppContext {
                 ticketRepo
         ) : null;
 
+
         System.out.println(" AppContext initialized successfully.");
 
         // Register shutdown hook for graceful connection pool closure

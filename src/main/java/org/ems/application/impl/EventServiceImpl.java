@@ -173,8 +173,8 @@ public class EventServiceImpl implements EventService {
                 return false;
             }
 
-            // Add material path to session
-            session.addMaterial(uploadedPath);
+            // Set material path to session (chỉ 1 link duy nhất)
+            session.setMaterialPath(uploadedPath);
             sessionRepo.save(session);
 
             System.out.println("Session material uploaded successfully for session: " + sessionId);

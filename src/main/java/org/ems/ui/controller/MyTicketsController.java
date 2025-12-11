@@ -9,39 +9,66 @@ import javafx.scene.layout.VBox;
 import javafx.scene.layout.HBox;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.application.Platform;
 import org.ems.config.AppContext;
-import org.ems.domain.model.*;
-import org.ems.infrastructure.util.QRCodeUtil;
+import org.ems.domain.model.Attendee;
 import org.ems.ui.stage.SceneManager;
 import org.ems.ui.util.AsyncTaskService;
+import org.ems.application.dto.TicketDisplayDTO;
+import org.ems.application.service.TicketLoaderService;
+import org.ems.application.service.TicketFilterService;
+import org.ems.application.service.TicketCalculationService;
+import org.ems.application.service.TicketQRCodeService;
+import org.ems.application.service.TicketExportService;
 
 import java.io.ByteArrayInputStream;
 import java.util.*;
 
 /**
+ * My Tickets Controller - SOLID REFACTORED
+ * - Single Responsibility: UI coordination only
+ * - Dependency Injection: Services injected via constructor
+ * - Delegation: Business logic delegated to services
+ * - Clean Architecture: Separated concerns between UI, Services, and Data layers
  * @author <your group number>
- * OPTIMIZED: Batch load events, async loading, avoid N+1 queries
  */
 public class MyTicketsController {
 
     @FXML private TextField searchField;
     @FXML private ComboBox<String> statusFilterCombo;
     @FXML private ComboBox<String> typeFilterCombo;
-    @FXML private TableView<TicketRow> ticketsTable;
+    @FXML private TableView<TicketDisplayDTO> ticketsTable;
     @FXML private Label recordCountLabel;
     @FXML private Label totalValueLabel;
 
-    private List<TicketRow> allTickets;
+    private List<TicketDisplayDTO> allTickets;
     private AppContext appContext;
+
+    // Injected Services
+    private TicketLoaderService ticketLoaderService;
+    private TicketFilterService ticketFilterService;
+    private TicketCalculationService ticketCalculationService;
+    private TicketQRCodeService ticketQRCodeService;
+    private TicketExportService ticketExportService;
 
     @FXML
     public void initialize() {
         long initStart = System.currentTimeMillis();
-        System.out.println("📋 [MyTickets] initialize() starting...");
+        System.out.println("📋 [MyTicketsController] initialize() starting...");
         try {
             appContext = AppContext.get();
 
+            // Inject services
+            long serviceStart = System.currentTimeMillis();
+            ticketLoaderService = new TicketLoaderService(appContext.ticketRepo, appContext.eventRepo);
+            ticketFilterService = new TicketFilterService();
+            ticketCalculationService = new TicketCalculationService();
+            ticketQRCodeService = new TicketQRCodeService();
+            ticketExportService = new TicketExportService();
+            System.out.println("  ✓ Services initialized in " + (System.currentTimeMillis() - serviceStart) + "ms");
+
             // Setup filter combos
+            long comboStart = System.currentTimeMillis();
             statusFilterCombo.setItems(FXCollections.observableArrayList(
                     "ALL", "ACTIVE", "USED", "CANCELLED"
             ));
@@ -51,13 +78,16 @@ public class MyTicketsController {
                     "ALL", "GENERAL", "VIP", "EARLY_BIRD", "STUDENT", "GROUP"
             ));
             typeFilterCombo.setValue("ALL");
+            System.out.println("  ✓ Filters setup in " + (System.currentTimeMillis() - comboStart) + "ms");
 
             // Setup table columns
+            long colStart = System.currentTimeMillis();
             setupTableColumns();
+            System.out.println("  ✓ Table columns setup in " + (System.currentTimeMillis() - colStart) + "ms");
 
-            System.out.println("  ✓ UI setup in " + (System.currentTimeMillis() - initStart) + " ms");
+            System.out.println("  ✓ UI initialized in " + (System.currentTimeMillis() - initStart) + "ms");
             System.out.println("  🔄 Starting async load...");
-            
+
             // Load all tickets asynchronously
             loadMyTicketsAsync();
 
@@ -67,110 +97,69 @@ public class MyTicketsController {
         }
     }
 
+    /**
+     * Setup table columns with proper binding to TicketDisplayDTO
+     */
     private void setupTableColumns() {
-        ObservableList<TableColumn<TicketRow, ?>> columns = ticketsTable.getColumns();
+        ObservableList<TableColumn<TicketDisplayDTO, ?>> columns = ticketsTable.getColumns();
 
         if (columns.size() >= 8) {
-            ((TableColumn<TicketRow, String>) columns.get(0)).setCellValueFactory(cellData ->
-                new javafx.beans.property.SimpleStringProperty(cellData.getValue().ticketId));
-            ((TableColumn<TicketRow, String>) columns.get(1)).setCellValueFactory(cellData ->
-                new javafx.beans.property.SimpleStringProperty(cellData.getValue().eventName));
-            ((TableColumn<TicketRow, String>) columns.get(2)).setCellValueFactory(cellData ->
-                new javafx.beans.property.SimpleStringProperty(cellData.getValue().sessionName));
-            ((TableColumn<TicketRow, String>) columns.get(3)).setCellValueFactory(cellData ->
-                new javafx.beans.property.SimpleStringProperty(cellData.getValue().type));
-            ((TableColumn<TicketRow, String>) columns.get(4)).setCellValueFactory(cellData ->
-                new javafx.beans.property.SimpleStringProperty(cellData.getValue().price));
-            ((TableColumn<TicketRow, String>) columns.get(5)).setCellValueFactory(cellData ->
-                new javafx.beans.property.SimpleStringProperty(cellData.getValue().status));
-            ((TableColumn<TicketRow, String>) columns.get(6)).setCellValueFactory(cellData ->
-                new javafx.beans.property.SimpleStringProperty(cellData.getValue().purchaseDate));
-            ((TableColumn<TicketRow, String>) columns.get(7)).setCellValueFactory(cellData ->
-                new javafx.beans.property.SimpleStringProperty(cellData.getValue().qrCode));
+            ((TableColumn<TicketDisplayDTO, String>) columns.get(0)).setCellValueFactory(cellData ->
+                new javafx.beans.property.SimpleStringProperty(cellData.getValue().getTicketId()));
+            ((TableColumn<TicketDisplayDTO, String>) columns.get(1)).setCellValueFactory(cellData ->
+                new javafx.beans.property.SimpleStringProperty(cellData.getValue().getEventName()));
+            ((TableColumn<TicketDisplayDTO, String>) columns.get(2)).setCellValueFactory(cellData ->
+                new javafx.beans.property.SimpleStringProperty(cellData.getValue().getSessionName()));
+            ((TableColumn<TicketDisplayDTO, String>) columns.get(3)).setCellValueFactory(cellData ->
+                new javafx.beans.property.SimpleStringProperty(cellData.getValue().getType()));
+            ((TableColumn<TicketDisplayDTO, String>) columns.get(4)).setCellValueFactory(cellData ->
+                new javafx.beans.property.SimpleStringProperty(cellData.getValue().getPrice()));
+            ((TableColumn<TicketDisplayDTO, String>) columns.get(5)).setCellValueFactory(cellData ->
+                new javafx.beans.property.SimpleStringProperty(cellData.getValue().getStatus()));
+            ((TableColumn<TicketDisplayDTO, String>) columns.get(6)).setCellValueFactory(cellData ->
+                new javafx.beans.property.SimpleStringProperty(cellData.getValue().getPurchaseDate()));
+            ((TableColumn<TicketDisplayDTO, String>) columns.get(7)).setCellValueFactory(cellData ->
+                new javafx.beans.property.SimpleStringProperty(cellData.getValue().getQrCode()));
         }
     }
 
     /**
-     * Load tickets asynchronously to prevent UI freeze
-     * OPTIMIZED: Batch load all events in ONE query, then filter in-memory
+     * Load tickets asynchronously via TicketLoaderService
+     * Preserves batch loading optimization (single query per repository)
      */
     private void loadMyTicketsAsync() {
+        long asyncStart = System.currentTimeMillis();
+
         AsyncTaskService.runAsync(
                 () -> {
                     long taskStart = System.currentTimeMillis();
                     System.out.println("    🔄 [Background] Loading tickets...");
-                    
-                    List<TicketRow> tickets = new ArrayList<>();
 
                     try {
-                        if (appContext.currentUser instanceof Attendee && appContext.ticketRepo != null && appContext.eventRepo != null) {
+                        if (appContext.currentUser instanceof Attendee) {
                             Attendee attendee = (Attendee) appContext.currentUser;
-
-                            long ticketStart = System.currentTimeMillis();
-                            // BATCH LOAD: Get all tickets in ONE query
-                            List<Ticket> allTicketsFromDb = appContext.ticketRepo.findByAttendee(attendee.getId());
-                            long ticketTime = System.currentTimeMillis() - ticketStart;
-                            System.out.println("    ✓ findByAttendee() took " + ticketTime + " ms: " + allTicketsFromDb.size() + " tickets");
-
-                            if (allTicketsFromDb.isEmpty()) {
-                                System.out.println("    ℹ No tickets found");
-                                return tickets;
-                            }
-
-                            // BATCH LOAD: Get all events in ONE query (not N queries!)
-                            long eventStart = System.currentTimeMillis();
-                            List<Event> allEvents = appContext.eventRepo.findAll();
-                            long eventTime = System.currentTimeMillis() - eventStart;
-                            System.out.println("    ✓ findAll() took " + eventTime + " ms: " + allEvents.size() + " events");
-
-                            // Create eventId -> Event map for O(1) lookup
-                            Map<UUID, Event> eventMap = new HashMap<>();
-                            for (Event event : allEvents) {
-                                eventMap.put(event.getId(), event);
-                            }
-
-                            // OPTIMIZE: Single pass - no nested queries
-                            long convertStart = System.currentTimeMillis();
-                            for (Ticket ticket : allTicketsFromDb) {
-                                String eventName = "Unknown";
-                                
-                                // O(1) lookup instead of DB query
-                                if (ticket.getEventId() != null && eventMap.containsKey(ticket.getEventId())) {
-                                    Event event = eventMap.get(ticket.getEventId());
-                                    if (event != null && event.getName() != null) {
-                                        eventName = event.getName();
-                                    }
-                                }
-
-                                tickets.add(new TicketRow(
-                                        ticket.getId().toString().substring(0, 8),
-                                        eventName,
-                                        "Event Ticket",
-                                        ticket.getType() != null ? ticket.getType().name() : "N/A",
-                                        ticket.getPrice() != null ? "$" + ticket.getPrice() : "$0",
-                                        ticket.getTicketStatus() != null ? ticket.getTicketStatus().name() : "N/A",
-                                        "2025-12-03",
-                                        ticket.getQrCodeData() != null ? ticket.getQrCodeData() : "N/A"
-                                ));
-                            }
-                            long convertTime = System.currentTimeMillis() - convertStart;
-                            System.out.println("    ✓ Converted to display rows in " + convertTime + " ms");
+                            // Delegate to service - all batch optimization preserved
+                            return ticketLoaderService.loadAttendeeTickets(attendee);
+                        } else {
+                            System.out.println("  ⚠️ User is not attendee");
+                            return new ArrayList<>();
                         }
-                    } catch (Exception e) {
-                        System.err.println("    ✗ Error loading tickets: " + e.getMessage());
-                        e.printStackTrace();
-                    }
 
-                    System.out.println("    ✓ Background task completed in " + (System.currentTimeMillis() - taskStart) + " ms");
-                    return tickets;
+                    } catch (TicketLoaderService.TicketLoaderException e) {
+                        System.err.println("    ✗ Error loading tickets: " + e.getMessage());
+                        return new ArrayList<>();
+                    }
                 },
                 tickets -> {
                     long uiStart = System.currentTimeMillis();
-                    allTickets = tickets;
+                    @SuppressWarnings("unchecked")
+                    List<TicketDisplayDTO> result = (List<TicketDisplayDTO>) tickets;
+
+                    allTickets = result;
                     displayTickets(allTickets);
-                    calculateTotalValue();
+                    calculateAndDisplayTotalValue();
                     System.out.println("  ✓ UI updated in " + (System.currentTimeMillis() - uiStart) + " ms");
-                    System.out.println("✓ MyTickets loaded successfully");
+                    System.out.println("✓ MyTickets loaded successfully in " + (System.currentTimeMillis() - asyncStart) + " ms");
                 },
                 error -> {
                     showAlert("Error", "Failed to load tickets: " + error.getMessage());
@@ -179,78 +168,87 @@ public class MyTicketsController {
         );
     }
 
-    private void displayTickets(List<TicketRow> tickets) {
-        ObservableList<TicketRow> observableList = FXCollections.observableArrayList(tickets);
+    /**
+     * Display tickets in table
+     */
+    private void displayTickets(List<TicketDisplayDTO> tickets) {
+        ObservableList<TicketDisplayDTO> observableList = FXCollections.observableArrayList(tickets);
         ticketsTable.setItems(observableList);
         recordCountLabel.setText("Total Tickets: " + tickets.size());
     }
 
-    private void calculateTotalValue() {
+    /**
+     * Calculate and display total value via service
+     */
+    private void calculateAndDisplayTotalValue() {
         try {
-            double total = 0;
-            for (TicketRow ticket : allTickets) {
-                String priceStr = ticket.price.replace("$", "");
-                total += Double.parseDouble(priceStr);
-            }
-            totalValueLabel.setText("Total Value: $" + String.format("%.2f", total));
+            double totalValue = ticketCalculationService.calculateTotalValue(allTickets);
+            totalValueLabel.setText("Total Value: " + ticketCalculationService.formatPrice(totalValue));
         } catch (Exception e) {
             totalValueLabel.setText("Total Value: $0.00");
+            System.err.println("Error calculating total value: " + e.getMessage());
         }
     }
 
+    /**
+     * Handle search filter
+     * Delegates filtering logic to TicketFilterService
+     */
     @FXML
     public void onSearch() {
+        long searchStart = System.currentTimeMillis();
+        System.out.println("🔎 [MyTicketsController] onSearch() starting...");
         try {
-            String searchTerm = searchField.getText().toLowerCase();
+            String searchTerm = searchField.getText();
             String statusFilter = statusFilterCombo.getValue();
             String typeFilter = typeFilterCombo.getValue();
 
-            List<TicketRow> filtered = new ArrayList<>();
-
-            for (TicketRow ticket : allTickets) {
-                // Apply status filter
-                if (!statusFilter.equals("ALL") && !ticket.status.equals(statusFilter)) {
-                    continue;
-                }
-
-                // Apply type filter
-                if (!typeFilter.equals("ALL") && !ticket.type.equals(typeFilter)) {
-                    continue;
-                }
-
-                // Apply search filter
-                if (searchTerm.isEmpty() ||
-                    ticket.ticketId.toLowerCase().contains(searchTerm) ||
-                    ticket.eventName.toLowerCase().contains(searchTerm) ||
-                    ticket.sessionName.toLowerCase().contains(searchTerm)) {
-                    filtered.add(ticket);
-                }
-            }
+            // Delegate to service
+            List<TicketDisplayDTO> filtered = ticketFilterService.filterTickets(
+                    allTickets, searchTerm, statusFilter, typeFilter);
 
             displayTickets(filtered);
+            System.out.println("  ✓ onSearch() completed in " + (System.currentTimeMillis() - searchStart) + "ms");
 
         } catch (Exception e) {
             showAlert("Error", "Search failed: " + e.getMessage());
         }
     }
 
+    /**
+     * Reset search and filter criteria
+     */
     @FXML
     public void onReset() {
+        long resetStart = System.currentTimeMillis();
+        System.out.println("🔄 [MyTicketsController] onReset() called");
         searchField.clear();
         statusFilterCombo.setValue("ALL");
         typeFilterCombo.setValue("ALL");
         displayTickets(allTickets);
+        calculateAndDisplayTotalValue();
+        System.out.println("  ✓ onReset() completed in " + (System.currentTimeMillis() - resetStart) + "ms");
     }
 
+    /**
+     * Handle view QR code button
+     * Delegates QR code generation to TicketQRCodeService
+     */
     @FXML
     public void onViewQRCode() {
-        TicketRow selected = ticketsTable.getSelectionModel().getSelectedItem();
+        TicketDisplayDTO selected = ticketsTable.getSelectionModel().getSelectedItem();
         if (selected == null) {
             showAlert("Warning", "Please select a ticket to view QR code");
             return;
         }
 
         try {
+            // Check if ticket has valid QR code
+            if (!ticketQRCodeService.hasValidQRCode(selected)) {
+                showAlert("Info", "No QR code available for this ticket");
+                return;
+            }
+
             Dialog<Void> dialog = new Dialog<>();
             dialog.setTitle("🎟️ Your Ticket - QR Code");
             dialog.setHeaderText("Show this QR code at event entrance");
@@ -263,90 +261,55 @@ public class MyTicketsController {
             VBox infoBox = new VBox(8);
             infoBox.setStyle("-fx-border-color: #cccccc; -fx-border-width: 1; -fx-padding: 15; -fx-border-radius: 5;");
 
-            Label eventLabel = new Label("🎪 Event: " + selected.eventName);
+            Label eventLabel = new Label("🎪 Event: " + selected.getEventName());
             eventLabel.setStyle("-fx-font-size: 14; -fx-font-weight: bold;");
 
-            Label sessionLabel = new Label("🎤 Session: " + selected.sessionName);
+            Label sessionLabel = new Label("🎤 Session: " + selected.getSessionName());
             sessionLabel.setStyle("-fx-font-size: 12;");
 
-            Label typeLabel = new Label("🎫 Type: " + selected.type);
+            Label typeLabel = new Label("🎫 Type: " + selected.getType());
             typeLabel.setStyle("-fx-font-size: 12;");
 
-            Label priceLabel = new Label("💰 Price: " + selected.price);
+            Label priceLabel = new Label("💰 Price: " + selected.getPrice());
             priceLabel.setStyle("-fx-font-size: 12;");
 
-            Label statusLabel = new Label("✅ Status: " + selected.status);
+            Label statusLabel = new Label("✅ Status: " + selected.getStatus());
             statusLabel.setStyle("-fx-font-size: 12;");
 
             infoBox.getChildren().addAll(eventLabel, sessionLabel, typeLabel, priceLabel, statusLabel);
-
             content.getChildren().add(infoBox);
 
             // QR Code Image Section
-            if (selected.qrCode != null && !selected.qrCode.equals("N/A")) {
+            byte[] qrCodeImage = ticketQRCodeService.generateQRCodeImage(selected.getQrCode());
+
+            if (qrCodeImage != null) {
                 try {
-                    // Generate QR code image from base64 data
-                    byte[] qrCodeImage = QRCodeUtil.generateQRCodeImage(selected.qrCode);
+                    // Create ImageView for QR code
+                    ImageView qrImageView = new ImageView(
+                        new Image(new ByteArrayInputStream(qrCodeImage))
+                    );
+                    qrImageView.setFitWidth(300);
+                    qrImageView.setFitHeight(300);
+                    qrImageView.setPreserveRatio(true);
+                    qrImageView.setStyle("-fx-border-color: #2c3e50; -fx-border-width: 2;");
 
-                    if (qrCodeImage != null) {
-                        // Create ImageView for QR code
-                        ImageView qrImageView = new ImageView(
-                            new Image(new ByteArrayInputStream(qrCodeImage))
-                        );
-                        qrImageView.setFitWidth(300);
-                        qrImageView.setFitHeight(300);
-                        qrImageView.setPreserveRatio(true);
-                        qrImageView.setStyle("-fx-border-color: #2c3e50; -fx-border-width: 2;");
+                    // QR Code container with label
+                    VBox qrBox = new VBox(10);
+                    qrBox.setStyle("-fx-alignment: center; -fx-border-color: #ecf0f1; -fx-border-width: 1; -fx-padding: 20; -fx-border-radius: 5;");
 
-                        // QR Code container with label
-                        VBox qrBox = new VBox(10);
-                        qrBox.setStyle("-fx-alignment: center; -fx-border-color: #ecf0f1; -fx-border-width: 1; -fx-padding: 20; -fx-border-radius: 5;");
+                    Label qrTitleLabel = new Label("QR Code");
+                    qrTitleLabel.setStyle("-fx-font-size: 14; -fx-font-weight: bold; -fx-text-fill: #2c3e50;");
 
-                        Label qrTitleLabel = new Label("QR Code");
-                        qrTitleLabel.setStyle("-fx-font-size: 14; -fx-font-weight: bold; -fx-text-fill: #2c3e50;");
+                    qrBox.getChildren().addAll(qrTitleLabel, qrImageView);
+                    content.getChildren().add(qrBox);
 
-                        qrBox.getChildren().addAll(qrTitleLabel, qrImageView);
-                        content.getChildren().add(qrBox);
-
-                        System.out.println("✓ QR code image generated and displayed");
-                    } else {
-                        // Fallback to text display if image generation fails
-                        Label qrLabel = new Label(selected.qrCode);
-                        qrLabel.setStyle("-fx-font-size: 12; -fx-text-fill: #2c3e50; " +
-                                "-fx-border-color: #2c3e50; -fx-border-width: 1; -fx-padding: 10; " +
-                                "-fx-background-color: #ecf0f1; -fx-border-radius: 3;");
-                        qrLabel.setWrapText(true);
-
-                        VBox qrBox = new VBox(10);
-                        qrBox.setStyle("-fx-alignment: center;");
-                        qrBox.getChildren().addAll(
-                            new Label("QR Code (Text):"),
-                            qrLabel
-                        );
-                        content.getChildren().add(qrBox);
-                    }
+                    System.out.println("✓ QR code image generated and displayed");
                 } catch (Exception e) {
                     System.err.println("Failed to generate QR code image: " + e.getMessage());
-
-                    // Fallback to text display
-                    Label qrLabel = new Label(selected.qrCode);
-                    qrLabel.setStyle("-fx-font-size: 12; -fx-text-fill: #2c3e50; " +
-                            "-fx-border-color: #2c3e50; -fx-border-width: 1; -fx-padding: 10; " +
-                            "-fx-background-color: #ecf0f1; -fx-border-radius: 3;");
-                    qrLabel.setWrapText(true);
-
-                    VBox qrBox = new VBox(10);
-                    qrBox.setStyle("-fx-alignment: center;");
-                    qrBox.getChildren().addAll(
-                        new Label("QR Code (Text Fallback):"),
-                        qrLabel
-                    );
-                    content.getChildren().add(qrBox);
+                    addQRCodeTextFallback(content, selected.getQrCode(), "Text Fallback");
                 }
             } else {
-                Label noQRLabel = new Label("❌ No QR code available for this ticket");
-                noQRLabel.setStyle("-fx-font-size: 12; -fx-text-fill: #e74c3c;");
-                content.getChildren().add(noQRLabel);
+                addQRCodeTextFallback(content, selected.getQrCode(), "Text");
             }
 
             // Instructions
@@ -367,28 +330,55 @@ public class MyTicketsController {
         }
     }
 
+    /**
+     * Add QR code text fallback to dialog
+     */
+    private void addQRCodeTextFallback(VBox content, String qrCode, String label) {
+        Label qrLabel = new Label(qrCode);
+        qrLabel.setStyle("-fx-font-size: 12; -fx-text-fill: #2c3e50; " +
+                "-fx-border-color: #2c3e50; -fx-border-width: 1; -fx-padding: 10; " +
+                "-fx-background-color: #ecf0f1; -fx-border-radius: 3;");
+        qrLabel.setWrapText(true);
+
+        VBox qrBox = new VBox(10);
+        qrBox.setStyle("-fx-alignment: center;");
+        qrBox.getChildren().addAll(
+            new Label("QR Code (" + label + "):"),
+            qrLabel
+        );
+        content.getChildren().add(qrBox);
+    }
+
+    /**
+     * Handle export tickets button
+     * Delegates CSV generation to TicketExportService
+     */
     @FXML
     public void onExportTickets() {
-        try {
-            StringBuilder csv = new StringBuilder();
-            csv.append("Ticket ID,Event,Session,Type,Price,Status,Purchase Date,QR Code\n");
+        long exportStart = System.currentTimeMillis();
+        System.out.println("📤 [MyTicketsController] onExportTickets() starting...");
 
-            for (TicketRow ticket : allTickets) {
-                csv.append(ticket.ticketId).append(",")
-                   .append(ticket.eventName).append(",")
-                   .append(ticket.sessionName).append(",")
-                   .append(ticket.type).append(",")
-                   .append(ticket.price).append(",")
-                   .append(ticket.status).append(",")
-                   .append(ticket.purchaseDate).append(",")
-                   .append(ticket.qrCode).append("\n");
+        try {
+            // Delegate to service to generate CSV
+            String csv = ticketExportService.generateCSV(allTickets);
+
+            if (csv.isEmpty()) {
+                showAlert("Warning", "No tickets to export");
+                return;
             }
 
-            // TODO: Save CSV to file
-            showAlert("Success", "Export feature coming soon!");
+            // TODO: Save CSV to file (implement file dialog and write)
+            // String filename = ticketExportService.generateFilename();
+            // FileUtils.writeToFile(filename, csv);
+
+            showAlert("Success", "Export feature coming soon!\n\n" +
+                    "This would export " + allTickets.size() + " tickets to CSV file.");
+
+            System.out.println("  ✓ onExportTickets() completed in " + (System.currentTimeMillis() - exportStart) + "ms");
 
         } catch (Exception e) {
             showAlert("Error", "Export failed: " + e.getMessage());
+            System.err.println("✗ Export error: " + e.getMessage());
         }
     }
 
@@ -397,46 +387,15 @@ public class MyTicketsController {
         SceneManager.switchTo("dashboard.fxml", "EMS - Dashboard");
     }
 
+    /**
+     * Show alert dialog to user
+     */
     private void showAlert(String title, String message) {
         Alert alert = new Alert(Alert.AlertType.INFORMATION);
         alert.setTitle(title);
         alert.setHeaderText(null);
         alert.setContentText(message);
         alert.showAndWait();
-    }
-
-    // Helper class
-    public static class TicketRow {
-        public String ticketId;
-        public String eventName;
-        public String sessionName;
-        public String type;
-        public String price;
-        public String status;
-        public String purchaseDate;
-        public String qrCode;
-
-        public TicketRow(String ticketId, String eventName, String sessionName, String type,
-                        String price, String status, String purchaseDate, String qrCode) {
-            this.ticketId = ticketId;
-            this.eventName = eventName;
-            this.sessionName = sessionName;
-            this.type = type;
-            this.price = price;
-            this.status = status;
-            this.purchaseDate = purchaseDate;
-            this.qrCode = qrCode;
-        }
-
-        // Getters for TableView binding
-        public String getTicketId() { return ticketId; }
-        public String getEventName() { return eventName; }
-        public String getSessionName() { return sessionName; }
-        public String getType() { return type; }
-        public String getPrice() { return price; }
-        public String getStatus() { return status; }
-        public String getPurchaseDate() { return purchaseDate; }
-        public String getQrCode() { return qrCode; }
     }
 }
 

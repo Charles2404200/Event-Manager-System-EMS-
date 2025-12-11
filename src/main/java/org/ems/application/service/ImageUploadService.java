@@ -59,6 +59,7 @@ public class ImageUploadService {
      * @throws Exception if upload fails
      */
     public String uploadEventImage(File imageFile, String eventId) throws Exception {
+        long start = System.currentTimeMillis();
         if (imageFile == null || !imageFile.exists()) {
             throw new IllegalArgumentException("Image file does not exist");
         }
@@ -93,12 +94,48 @@ public class ImageUploadService {
             // Return public R2.dev URL in CORRECT format: https://pub-9aa0fc184b60436e9347d729de11e4a5.r2.dev/ + key
             String publicUrl = "https://pub-9aa0fc184b60436e9347d729de11e4a5.r2.dev/" + s3Key;
             System.out.println("✓ Image uploaded successfully: " + publicUrl);
+            System.out.println("[ImageUploadService] uploadImage completed in " + (System.currentTimeMillis() - start) + " ms, url=" + publicUrl);
             return publicUrl;
 
         } catch (Exception e) {
             System.err.println("✗ Failed to upload image: " + e.getMessage());
             e.printStackTrace();
             throw new RuntimeException("Image upload failed: " + e.getMessage(), e);
+        }
+    }
+
+    // Thêm method log cho material upload (dùng chung logic, chỉ khác context log)
+    public String uploadSessionMaterial(File materialFile, String sessionId) throws Exception {
+        long start = System.currentTimeMillis();
+        if (materialFile == null || !materialFile.exists()) {
+            throw new IllegalArgumentException("Material file does not exist");
+        }
+        if (sessionId == null || sessionId.trim().isEmpty()) {
+            throw new IllegalArgumentException("Session ID is required");
+        }
+        if (s3Client == null) {
+            throw new RuntimeException("S3 client not initialized");
+        }
+        try {
+            String fileExtension = getFileExtension(materialFile.getName());
+            String uniqueFileName = generateUniqueFileName(fileExtension);
+            String s3Key = "event-manager-system/session-materials/" + sessionId + "/" + uniqueFileName;
+            System.out.println("Uploading session material to R2: " + s3Key);
+            System.out.println("File size: " + materialFile.length() + " bytes");
+            PutObjectRequest putRequest = PutObjectRequest.builder()
+                    .bucket(R2_BUCKET_NAME)
+                    .key(s3Key)
+                    .acl("public-read")
+                    .build();
+            s3Client.putObject(putRequest, Paths.get(materialFile.getAbsolutePath()));
+            String publicUrl = "https://pub-9aa0fc184b60436e9347d729de11e4a5.r2.dev/" + s3Key;
+            System.out.println("✓ Session material uploaded successfully: " + publicUrl);
+            System.out.println("[ImageUploadService] uploadSessionMaterial completed in " + (System.currentTimeMillis() - start) + " ms, url=" + publicUrl);
+            return publicUrl;
+        } catch (Exception e) {
+            System.err.println("✗ Failed to upload session material: " + e.getMessage());
+            e.printStackTrace();
+            throw new RuntimeException("Session material upload failed: " + e.getMessage(), e);
         }
     }
 
@@ -189,4 +226,3 @@ public class ImageUploadService {
         }
     }
 }
-

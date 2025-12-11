@@ -29,6 +29,7 @@ public class MyRegistrationsController {
     @FXML private VBox loadingPlaceholder;
     @FXML private ProgressBar loadingProgressBar;
     @FXML private Label loadingPercentLabel;
+    @FXML private VBox registeredSessionsContainer;
 
     private List<Session> availableSessions = new ArrayList<>();
     private Map<String, UUID> eventMap = new HashMap<>();
@@ -143,6 +144,7 @@ public class MyRegistrationsController {
                     if (!eventNames.isEmpty()) {
                         eventCombo.setValue(eventNames.get(0));
                         loadSessionsForEvent(eventMap.get(eventNames.get(0)));
+                        loadRegisteredSessionsForEvent(eventMap.get(eventNames.get(0)));
                     } else {
                         Label noTicketsLabel = new Label("No tickets yet. Buy a ticket first to register for sessions!");
                         noTicketsLabel.setStyle("-fx-font-size: 12; -fx-text-fill: #999;");
@@ -155,6 +157,7 @@ public class MyRegistrationsController {
                         String selected = eventCombo.getValue();
                         if (selected != null && eventMap.containsKey(selected)) {
                             loadSessionsForEvent(eventMap.get(selected));
+                            loadRegisteredSessionsForEvent(eventMap.get(selected));
                         }
                     });
 
@@ -207,6 +210,37 @@ public class MyRegistrationsController {
                     System.err.println("✗ Error loading sessions: " + error.getMessage());
                     showAlert("Error", "Failed to load sessions: " + error.getMessage());
                 }
+        );
+    }
+
+    /**
+     * Load registered sessions for attendee for selected event - ASYNC
+     */
+    private void loadRegisteredSessionsForEvent(UUID eventId) {
+        if (!(appContext.currentUser instanceof Attendee)) return;
+        Attendee attendee = (Attendee) appContext.currentUser;
+        registeredSessionsContainer.getChildren().clear();
+        registeredSessionsContainer.setVisible(true);
+        registeredSessionsContainer.setManaged(true);
+
+        AsyncTaskService.runAsync(
+            () -> {
+                List<Session> registered = new ArrayList<>();
+                try {
+                    if (appContext.sessionRepo != null) {
+                        registered = appContext.sessionRepo.findSessionsByAttendeeAndEvent(attendee.getId(), eventId);
+                    }
+                } catch (Exception e) {
+                    System.err.println("Error loading registered sessions: " + e.getMessage());
+                }
+                return registered;
+            },
+            result -> {
+                displayRegisteredSessions((List<Session>) result);
+            },
+            error -> {
+                registeredSessionsContainer.getChildren().add(new Label("Error loading registered sessions"));
+            }
         );
     }
 
@@ -294,6 +328,38 @@ public class MyRegistrationsController {
     }
 
     /**
+     * Display registered sessions with cancel option
+     */
+    private void displayRegisteredSessions(List<Session> sessions) {
+        Platform.runLater(() -> {
+            registeredSessionsContainer.getChildren().clear();
+            if (sessions == null || sessions.isEmpty()) {
+                Label noRegLabel = new Label("No registered sessions for this event");
+                noRegLabel.setStyle("-fx-font-size: 12; -fx-text-fill: #999;");
+                registeredSessionsContainer.getChildren().add(noRegLabel);
+                return;
+            }
+            Label title = new Label("Registered Sessions:");
+            title.setStyle("-fx-font-size: 12; -fx-font-weight: bold; -fx-text-fill: #2c3e50;");
+            registeredSessionsContainer.getChildren().add(title);
+            for (Session session : sessions) {
+                HBox row = new HBox(10);
+                row.setPadding(new Insets(8));
+                row.setStyle("-fx-border-color: #ddd; -fx-border-width: 0 0 1 0; -fx-padding: 8;");
+                Label info = new Label((session.getTitle() != null ? session.getTitle() : "Unknown") +
+                    " | " + (session.getStart() != null ? session.getStart().toLocalTime() : "N/A") +
+                    " | " + (session.getVenue() != null ? session.getVenue() : "N/A"));
+                info.setStyle("-fx-font-size: 11; -fx-text-fill: #333;");
+                Button cancelBtn = new Button("Cancel");
+                cancelBtn.setStyle("-fx-padding: 5 10; -fx-font-size: 11; -fx-background-color: #e74c3c; -fx-text-fill: white;");
+                cancelBtn.setOnAction(e -> cancelRegistration(session.getId()));
+                row.getChildren().addAll(info, cancelBtn);
+                registeredSessionsContainer.getChildren().add(row);
+            }
+        });
+    }
+
+    /**
      * Save selected sessions registration - ASYNC
      */
     @FXML
@@ -355,6 +421,42 @@ public class MyRegistrationsController {
                     System.err.println("✗ Error saving registrations: " + error.getMessage());
                     showAlert("Error", "Failed to save registrations: " + error.getMessage());
                 }
+        );
+    }
+
+    /**
+     * Cancel registration for a session - ASYNC
+     */
+    private void cancelRegistration(UUID sessionId) {
+        if (!(appContext.currentUser instanceof Attendee)) return;
+        Attendee attendee = (Attendee) appContext.currentUser;
+        AsyncTaskService.runAsync(
+            () -> {
+                try {
+                    if (appContext.sessionRepo != null) {
+                        appContext.sessionRepo.cancelAttendeeSession(attendee.getId(), sessionId);
+                        return true;
+                    }
+                } catch (Exception e) {
+                    System.err.println("Error canceling registration: " + e.getMessage());
+                }
+                return false;
+            },
+            success -> {
+                if ((Boolean) success) {
+                    showAlert("Success", "Session registration cancelled!");
+                    // Reload registered sessions
+                    String selected = eventCombo.getValue();
+                    if (selected != null && eventMap.containsKey(selected)) {
+                        loadRegisteredSessionsForEvent(eventMap.get(selected));
+                    }
+                } else {
+                    showAlert("Error", "Failed to cancel registration");
+                }
+            },
+            error -> {
+                showAlert("Error", "Failed to cancel registration: " + error.getMessage());
+            }
         );
     }
 

@@ -57,8 +57,9 @@ public class ImageServiceImpl implements ImageService {
             }
 
             System.out.println("Uploading session material to Cloudflare R2: " + filePath);
-            String materialUrl = uploadService.uploadEventImage(materialFile, sessionId.toString());
+            String materialUrl = uploadService.uploadSessionMaterial(materialFile, sessionId.toString());
             System.out.println("✓ Session material uploaded to R2: " + materialUrl);
+            System.out.println("[ImageServiceImpl] New session material uploaded to R2: " + materialUrl);
             return materialUrl;
         } catch (Exception e) {
             System.err.println("✗ Failed to upload session material: " + e.getMessage());
@@ -227,4 +228,3 @@ public class ImageServiceImpl implements ImageService {
         }
     }
 }
-

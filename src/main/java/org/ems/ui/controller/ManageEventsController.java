@@ -1,512 +1,396 @@
 package org.ems.ui.controller;
 
+import javafx.application.Platform;
+import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
-import javafx.collections.ObservableList;
 import javafx.concurrent.Task;
 import javafx.fxml.FXML;
+import javafx.geometry.Insets;
 import javafx.scene.control.*;
 import javafx.scene.layout.VBox;
-import javafx.geometry.Insets;
-import javafx.stage.FileChooser;
 import javafx.stage.Stage;
-import org.ems.application.service.EventService;
-import org.ems.application.service.ImageService;
+import org.ems.application.dto.EventCRUDResultDTO;
+import org.ems.application.dto.EventFormDataDTO;
+import org.ems.application.dto.EventRowDTO;
+import org.ems.application.service.*;
 import org.ems.config.AppContext;
-import org.ems.domain.model.Event;
-import org.ems.domain.model.enums.EventType;
-import org.ems.domain.model.enums.EventStatus;
 import org.ems.domain.repository.EventRepository;
-import org.ems.infrastructure.repository.jdbc.JdbcEventRepository;
+import org.ems.domain.repository.SessionRepository;
 import org.ems.ui.stage.SceneManager;
 
 import java.io.File;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.time.LocalDate;
-import java.util.*;
+import java.util.List;
+import java.util.UUID;
 
+/**
+ * ManageEventsController - UI Controller for Event Management (Admin)
+ *
+ * Responsibilities:
+ * - Handle FXML bindings
+ * - Route user events to services
+ * - Update UI with results
+ *
+ * Does NOT handle:
+ * - CRUD operations (→ EventCRUDService)
+ * - Filtering/searching (→ EventFilterService)
+ * - Image upload (→ EventImageUploadService)
+ * - Validation (→ EventValidationService)
+ * - Data conversion (→ EventDataConverterService)
+ *
+ * @author EMS Team
+ */
 public class ManageEventsController {
 
     @FXML private TextField searchField;
     @FXML private ComboBox<String> typeFilterCombo;
-    @FXML private TableView<EventRow> eventsTable;
+    @FXML private TableView<EventRowDTO> eventsTable;
     @FXML private Label recordCountLabel;
 
-    private EventRepository eventRepo;
-    private EventService eventService;
-    private ImageService imageService;
-    private List<EventRow> allEvents;
+    // ===== DEPENDENCY INJECTION - Services =====
+    private EventCRUDService crudService;
+    private EventFilterService filterService;
+    private EventImageUploadService imageService;
+    private EventValidationService validationService;
+    private EventDataConverterService converterService;
+
+    // ===== STATE =====
+    private List<EventRowDTO> currentDisplayedEvents;
 
     @FXML
     public void initialize() {
+        long start = System.currentTimeMillis();
+        System.out.println("⚙️ [ManageEventsController] initialize() starting...");
+
         try {
+            // Setup services
             AppContext context = AppContext.get();
-            eventRepo = context.eventRepo;
-            eventService = context.eventService;
-            imageService = context.imageService;
+            EventRepository eventRepo = context.eventRepo;
+            SessionRepository sessionRepo = context.sessionRepo;
 
-            typeFilterCombo.setItems(FXCollections.observableArrayList(
-                    "ALL", "CONFERENCE", "WORKSHOP", "CONCERT", "EXHIBITION", "SEMINAR"
-            ));
-            typeFilterCombo.setValue("ALL");
+            crudService = new EventCRUDService(eventRepo, context.imageService);
+            filterService = new EventFilterService(eventRepo);
+            imageService = new EventImageUploadService(context.imageService);
+            validationService = new EventValidationService();
+            converterService = new EventDataConverterService(sessionRepo, context.connection);
 
+            System.out.println("✓ Services initialized");
+
+            // Setup UI
+            setupTypeFilterCombo();
             setupTableColumns();
+            setupEventListeners();
 
-            // Load events bất đồng bộ để không block UI
-            loadAllEventsAsync();
+            System.out.println("✓ UI setup completed");
+
+            // Load events async
+            Platform.runLater(this::loadEventsAsync);
+
+            System.out.println("✓ initialize() completed in " + (System.currentTimeMillis() - start) + " ms");
 
         } catch (Exception e) {
+            System.err.println("✗ initialize() failed: " + e.getMessage());
+            e.printStackTrace();
             showAlert("Error", "Failed to initialize: " + e.getMessage());
-            e.printStackTrace(System.err);
-        }
-    }
-
-    private void setupTableColumns() {
-        ObservableList<TableColumn<EventRow, ?>> columns = eventsTable.getColumns();
-        if (columns.size() >= 8) {
-            ((TableColumn<EventRow, String>) columns.get(0)).setCellValueFactory(cellData ->
-                    new javafx.beans.property.SimpleStringProperty(cellData.getValue().id));
-            ((TableColumn<EventRow, String>) columns.get(1)).setCellValueFactory(cellData ->
-                    new javafx.beans.property.SimpleStringProperty(cellData.getValue().name));
-            ((TableColumn<EventRow, String>) columns.get(2)).setCellValueFactory(cellData ->
-                    new javafx.beans.property.SimpleStringProperty(cellData.getValue().type));
-            ((TableColumn<EventRow, String>) columns.get(3)).setCellValueFactory(cellData ->
-                    new javafx.beans.property.SimpleStringProperty(cellData.getValue().location));
-            ((TableColumn<EventRow, String>) columns.get(4)).setCellValueFactory(cellData ->
-                    new javafx.beans.property.SimpleStringProperty(cellData.getValue().startDate));
-            ((TableColumn<EventRow, String>) columns.get(5)).setCellValueFactory(cellData ->
-                    new javafx.beans.property.SimpleStringProperty(cellData.getValue().endDate));
-            ((TableColumn<EventRow, String>) columns.get(6)).setCellValueFactory(cellData ->
-                    new javafx.beans.property.SimpleStringProperty(cellData.getValue().status));
-            ((TableColumn<EventRow, String>) columns.get(7)).setCellValueFactory(cellData ->
-                    new javafx.beans.property.SimpleStringProperty(String.valueOf(cellData.getValue().sessionCount)));
         }
     }
 
     /**
-     * Bản tối ưu: load events trên background thread, dùng JOIN/COUNT để đếm session
-     * tránh N+1 query cực chậm khi số event lớn.
+     * Setup type filter combobox
      */
-    private void loadAllEventsAsync() {
-        Task<List<EventRow>> task = new Task<>() {
+    private void setupTypeFilterCombo() {
+        typeFilterCombo.setItems(FXCollections.observableArrayList(
+                "ALL", "CONFERENCE", "WORKSHOP", "CONCERT", "EXHIBITION", "SEMINAR"
+        ));
+        typeFilterCombo.setValue("ALL");
+    }
+
+    /**
+     * Setup table columns
+     */
+    private void setupTableColumns() {
+        var columns = eventsTable.getColumns();
+        if (columns.size() < 8) return;
+
+        ((TableColumn<EventRowDTO, String>) columns.get(0)).setCellValueFactory(cd ->
+                new SimpleStringProperty(cd.getValue().eventId.toString()));
+        ((TableColumn<EventRowDTO, String>) columns.get(1)).setCellValueFactory(cd ->
+                new SimpleStringProperty(cd.getValue().name));
+        ((TableColumn<EventRowDTO, String>) columns.get(2)).setCellValueFactory(cd ->
+                new SimpleStringProperty(cd.getValue().type));
+        ((TableColumn<EventRowDTO, String>) columns.get(3)).setCellValueFactory(cd ->
+                new SimpleStringProperty(cd.getValue().location));
+        ((TableColumn<EventRowDTO, String>) columns.get(4)).setCellValueFactory(cd ->
+                new SimpleStringProperty(cd.getValue().startDate));
+        ((TableColumn<EventRowDTO, String>) columns.get(5)).setCellValueFactory(cd ->
+                new SimpleStringProperty(cd.getValue().endDate));
+        ((TableColumn<EventRowDTO, String>) columns.get(6)).setCellValueFactory(cd ->
+                new SimpleStringProperty(cd.getValue().status));
+        ((TableColumn<EventRowDTO, String>) columns.get(7)).setCellValueFactory(cd ->
+                new SimpleStringProperty(String.valueOf(cd.getValue().sessionCount)));
+    }
+
+    /**
+     * Setup event listeners
+     */
+    private void setupEventListeners() {
+        typeFilterCombo.setOnAction(e -> onSearch());
+        searchField.setOnAction(e -> onSearch());
+    }
+
+    /**
+     * Load all events asynchronously
+     */
+    private void loadEventsAsync() {
+        System.out.println("📥 [ManageEventsController] loadEventsAsync() starting...");
+
+        Task<List<EventRowDTO>> task = new Task<>() {
             @Override
-            protected List<EventRow> call() {
-                return loadAllEventsOptimized();
+            protected List<EventRowDTO> call() {
+                long start = System.currentTimeMillis();
+                List<org.ems.domain.model.Event> allEvents = filterService.getAllEvents();
+                List<EventRowDTO> rows = converterService.convertEventsToRows(allEvents);
+                System.out.println("✓ loadEventsAsync task completed in " + (System.currentTimeMillis() - start) + " ms");
+                return rows;
             }
         };
 
         task.setOnSucceeded(evt -> {
-            allEvents = task.getValue();
-            displayEvents(allEvents);
+            currentDisplayedEvents = task.getValue();
+            displayEvents(currentDisplayedEvents);
         });
 
         task.setOnFailed(evt -> {
-            Throwable ex = task.getException();
-            showAlert("Error", "Failed to load events: " + (ex != null ? ex.getMessage() : "unknown error"));
-            ex.printStackTrace(System.err);
+            System.err.println("✗ Failed to load events: " + task.getException().getMessage());
+            showAlert("Error", "Failed to load events: " + task.getException().getMessage());
         });
 
-        Thread t = new Thread(task, "manage-events-loader");
-        t.setDaemon(true);
-        t.start();
+        new Thread(task, "manage-events-loader").start();
     }
 
     /**
-     * Thực tế logic load, chạy trong background thread.
-     * - Nếu có JdbcEventRepository: dùng findAllOptimized() đã JOIN sessions
-     * - Nếu không: dùng findAll() + một query COUNT(*) nhóm theo event_id để đếm session
+     * Display events in table
      */
-    private List<EventRow> loadAllEventsOptimized() {
-        List<EventRow> rows = new ArrayList<>();
-        try {
-            if (eventRepo == null) {
-                return rows;
-            }
-
-            AppContext context = AppContext.get();
-            Map<UUID, Integer> sessionCounts = new HashMap<>();
-
-            // Đếm session theo event chỉ với 1 query COUNT(*) GROUP BY event_id
-            if (context.connection != null) {
-                String sql = "SELECT event_id, COUNT(*) AS cnt FROM sessions GROUP BY event_id";
-                try (PreparedStatement ps = context.connection.prepareStatement(sql);
-                     ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        UUID eventId = (UUID) rs.getObject("event_id");
-                        int cnt = rs.getInt("cnt");
-                        sessionCounts.put(eventId, cnt);
-                    }
-                }
-            }
-
-            List<Event> events;
-            if (eventRepo instanceof JdbcEventRepository jdbcRepo) {
-                // Use optimized findAll() method
-                events = jdbcRepo.findAll();
-            } else {
-                events = eventRepo.findAll();
-            }
-
-            for (Event event : events) {
-                int sessionCount = sessionCounts.getOrDefault(event.getId(), 0);
-
-                rows.add(new EventRow(
-                        event.getId().toString(),
-                        event.getName(),
-                        event.getType().name(),
-                        event.getLocation(),
-                        event.getStartDate() != null ? event.getStartDate().toString() : "N/A",
-                        event.getEndDate() != null ? event.getEndDate().toString() : "N/A",
-                        event.getStatus().name(),
-                        sessionCount
-                ));
-            }
-
-            System.out.println("[ManageEvents] Loaded " + events.size() + " events (optimized)");
-            return rows;
-
-        } catch (Exception e) {
-            System.err.println("Load events error (optimized): " + e.getMessage());
-            e.printStackTrace(System.err);
-            return rows;
-        }
+    private void displayEvents(List<EventRowDTO> events) {
+        Platform.runLater(() -> {
+            eventsTable.setItems(FXCollections.observableArrayList(events));
+            recordCountLabel.setText("Total Records: " + events.size());
+        });
     }
 
-    private void displayEvents(List<EventRow> events) {
-        ObservableList<EventRow> observableList = FXCollections.observableArrayList(events);
-        eventsTable.setItems(observableList);
-        recordCountLabel.setText("Total Records: " + events.size());
-    }
-
+    /**
+     * Search and filter events
+     */
     @FXML
     public void onSearch() {
-        try {
-            String searchTerm = searchField.getText().toLowerCase();
-            String typeFilter = typeFilterCombo.getValue();
+        String searchTerm = searchField.getText();
+        String typeFilter = typeFilterCombo.getValue();
 
-            List<EventRow> filtered = new ArrayList<>();
+        System.out.println("[ManageEventsController] onSearch: term='" + searchTerm + "', type=" + typeFilter);
 
-            for (EventRow event : allEvents) {
-                if (!typeFilter.equals("ALL") && !event.type.equals(typeFilter)) {
-                    continue;
-                }
-                if (searchTerm.isEmpty() ||
-                        event.name.toLowerCase().contains(searchTerm) ||
-                        event.location.toLowerCase().contains(searchTerm)) {
-                    filtered.add(event);
-                }
+        Task<List<EventRowDTO>> task = new Task<>() {
+            @Override
+            protected List<EventRowDTO> call() {
+                List<org.ems.domain.model.Event> filtered = filterService.filterEvents(searchTerm, typeFilter);
+                return converterService.convertEventsToRows(filtered);
             }
+        };
 
-            displayEvents(filtered);
+        task.setOnSucceeded(evt -> displayEvents(task.getValue()));
+        task.setOnFailed(evt -> showAlert("Error", "Search failed: " + task.getException().getMessage()));
 
-        } catch (Exception e) {
-            showAlert("Error", "Search failed: " + e.getMessage());
-        }
+        new Thread(task, "search-filter-task").start();
     }
 
+    /**
+     * Reset filters
+     */
     @FXML
     public void onReset() {
         searchField.clear();
         typeFilterCombo.setValue("ALL");
-        if (allEvents != null) {
-            displayEvents(allEvents);
+        if (currentDisplayedEvents != null) {
+            displayEvents(currentDisplayedEvents);
         }
     }
 
+    /**
+     * Create new event
+     */
     @FXML
     public void onCreateEvent() {
-        try {
-            Dialog<ButtonType> dialog = new Dialog<>();
-            dialog.setTitle("Create New Event");
-            dialog.setHeaderText("Create a new event");
+        System.out.println("[ManageEventsController] onCreateEvent() starting...");
 
-            // Create form fields
-            TextField eventNameField = new TextField();
-            eventNameField.setPromptText("Event Name");
-            eventNameField.setPrefWidth(300);
-
-            ComboBox<String> typeCombo = new ComboBox<>();
-            typeCombo.setItems(FXCollections.observableArrayList(
-                    "CONFERENCE", "WORKSHOP", "CONCERT", "EXHIBITION", "SEMINAR"
-            ));
-            typeCombo.setValue("CONFERENCE");
-            typeCombo.setPrefWidth(300);
-
-            TextField locationField = new TextField();
-            locationField.setPromptText("Location");
-            locationField.setPrefWidth(300);
-
-            DatePicker startDatePicker = new DatePicker();
-            startDatePicker.setPrefWidth(300);
-
-            DatePicker endDatePicker = new DatePicker();
-            endDatePicker.setPrefWidth(300);
-
-            ComboBox<String> statusCombo = new ComboBox<>();
-            statusCombo.setItems(FXCollections.observableArrayList(
-                    "SCHEDULED", "ONGOING", "COMPLETED", "CANCELLED"
-            ));
-            statusCombo.setValue("SCHEDULED");
-            statusCombo.setPrefWidth(300);
-
-            // Image upload fields
-            Label imageLabel = new Label("No image selected");
-            imageLabel.setStyle("-fx-text-fill: #666666; -fx-font-size: 12;");
-            Button uploadImageBtn = new Button("Select Image");
-            uploadImageBtn.setPrefWidth(300);
-
-            final String[] selectedImagePath = {null};
-
-            uploadImageBtn.setOnAction(e -> {
-                FileChooser fileChooser = new FileChooser();
-                fileChooser.setTitle("Select Event Image");
-                fileChooser.getExtensionFilters().addAll(
-                    new FileChooser.ExtensionFilter("Image Files", "*.jpg", "*.jpeg", "*.png", "*.gif", "*.bmp"),
-                    new FileChooser.ExtensionFilter("All Files", "*.*")
-                );
-                File selectedFile = fileChooser.showOpenDialog(new Stage());
-                if (selectedFile != null) {
-                    selectedImagePath[0] = selectedFile.getAbsolutePath();
-                    imageLabel.setText("Selected: " + selectedFile.getName());
-                    imageLabel.setStyle("-fx-text-fill: #008000; -fx-font-size: 12;");
-                }
-            });
-
-            // Create form layout
-            VBox formBox = new VBox(10);
-            formBox.setPadding(new Insets(10));
-            formBox.getChildren().addAll(
-                    new Label("Event Name:"),
-                    eventNameField,
-                    new Label("Type:"),
-                    typeCombo,
-                    new Label("Location:"),
-                    locationField,
-                    new Label("Start Date:"),
-                    startDatePicker,
-                    new Label("End Date:"),
-                    endDatePicker,
-                    new Label("Status:"),
-                    statusCombo,
-                    new Label("Event Image:"),
-                    uploadImageBtn,
-                    imageLabel
-            );
-
-            dialog.getDialogPane().setContent(formBox);
-            dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
-
-            if (dialog.showAndWait().isPresent() && dialog.showAndWait().get() == ButtonType.OK) {
-                // Validate inputs
-                String eventName = eventNameField.getText();
-                String type = typeCombo.getValue();
-                String location = locationField.getText();
-                LocalDate startDate = startDatePicker.getValue();
-                LocalDate endDate = endDatePicker.getValue();
-                String status = statusCombo.getValue();
-
-                if (eventName.isBlank() || location.isBlank() || startDate == null || endDate == null) {
-                    showAlert("Validation Error", "Please fill in all required fields");
-                    return;
-                }
-
-                if (endDate.isBefore(startDate)) {
-                    showAlert("Validation Error", "End date must be after start date");
-                    return;
-                }
-
-                // Create event
-                Event event = new Event();
-                event.setId(UUID.randomUUID());
-                event.setName(eventName);
-                event.setType(EventType.valueOf(type));
-                event.setLocation(location);
-                event.setStartDate(startDate);
-                event.setEndDate(endDate);
-                event.setStatus(EventStatus.valueOf(status));
-
-                eventRepo.save(event);
-
-                // Upload image if selected
-                if (selectedImagePath[0] != null && !selectedImagePath[0].isEmpty()) {
-                    boolean imageUploadSuccess = eventService.uploadEventImage(selectedImagePath[0], event.getId());
-                    if (imageUploadSuccess) {
-                        showAlert("Success", "Event '" + eventName + "' created successfully with image!");
-                    } else {
-                        showAlert("Warning", "Event created but image upload failed. You can update the image later.");
-                    }
-                } else {
-                    showAlert("Success", "Event '" + eventName + "' created successfully!");
-                }
-
-                loadAllEventsAsync(); // Refresh table
-
-            }
-        } catch (Exception e) {
-            showAlert("Error", "Failed to create event: " + e.getMessage());
-            System.err.println("Create event error: " + e.getMessage());
-            e.printStackTrace(System.err);
+        EventFormData formData = showEventFormDialog(null);
+        if (formData == null) {
+            return;  // User cancelled
         }
+
+        // Validate
+        var validation = validationService.validate(formData.dto.name, formData.dto.location,
+                formData.dto.startDate, formData.dto.endDate);
+        if (!validation.valid) {
+            showAlert("Validation Error", validation.message);
+            return;
+        }
+
+        // Create in async task
+        Task<EventCRUDResultDTO> task = new Task<>() {
+            @Override
+            protected EventCRUDResultDTO call() {
+                try {
+                    // Step 1: Upload image FIRST if selected (before creating event)
+                    String imageUrl = null;
+                    if (formData.imagePath != null && !formData.imagePath.isEmpty()) {
+                        // Generate a temporary UUID for image upload folder organization
+                        java.util.UUID tempId = java.util.UUID.randomUUID();
+                        imageUrl = imageService.uploadImage(formData.imagePath, tempId);
+                        if (imageUrl == null) {
+                            System.err.println("[ManageEventsController] Image upload failed - aborting event creation");
+                            return EventCRUDResultDTO.error(
+                                    "Image upload failed. Event not created. Please check your image file and try again.",
+                                    "CREATE"
+                            );
+                        }
+                        System.out.println("[ManageEventsController] Image uploaded to R2: " + imageUrl);
+                    }
+
+                    // Step 2: Create event with the image URL (if we have one)
+                    var event = crudService.createEvent(
+                            formData.dto.name, formData.dto.type, formData.dto.location,
+                            formData.dto.startDate, formData.dto.endDate, formData.dto.status,
+                            imageUrl  // Include image URL from the start
+                    );
+
+                    if (imageUrl != null) {
+                        // Optionally: Move/rename the image in R2 to use actual event ID
+                        // For now, we keep it with the temporary ID - it still works
+                        return EventCRUDResultDTO.success(
+                                "Event '" + event.getName() + "' created successfully with image!",
+                                "CREATE"
+                        );
+                    } else {
+                        return EventCRUDResultDTO.success("Event '" + event.getName() + "' created successfully!", "CREATE");
+                    }
+
+                } catch (Exception e) {
+                    System.err.println("[ManageEventsController] Error creating event: " + e.getMessage());
+                    e.printStackTrace();
+                    return EventCRUDResultDTO.error("Failed to create event: " + e.getMessage(), "CREATE");
+                }
+            }
+        };
+
+        task.setOnSucceeded(evt -> {
+            EventCRUDResultDTO result = task.getValue();
+            showAlert(result.success ? "Success" : "Error", result.message);
+            if (result.success) {
+                filterService.invalidateCache();
+                loadEventsAsync();
+            }
+        });
+
+        new Thread(task, "create-event-task").start();
     }
 
+    /**
+     * Edit selected event
+     */
     @FXML
     public void onEditEvent() {
-        EventRow selected = eventsTable.getSelectionModel().getSelectedItem();
+        EventRowDTO selected = eventsTable.getSelectionModel().getSelectedItem();
         if (selected == null) {
             showAlert("Warning", "Please select an event to edit");
             return;
         }
 
-        try {
-            UUID eventId = UUID.fromString(selected.id);
-            Event event = eventRepo.findById(eventId);
+        System.out.println("[ManageEventsController] onEditEvent: " + selected.name);
 
-            if (event == null) {
-                showAlert("Error", "Event not found");
-                return;
-            }
-
-            Dialog<ButtonType> dialog = new Dialog<>();
-            dialog.setTitle("Edit Event");
-            dialog.setHeaderText("Edit event: " + event.getName());
-
-            // Create form fields with current values
-            TextField eventNameField = new TextField(event.getName());
-            eventNameField.setPrefWidth(300);
-
-            ComboBox<String> typeCombo = new ComboBox<>();
-            typeCombo.setItems(FXCollections.observableArrayList(
-                    "CONFERENCE", "WORKSHOP", "CONCERT", "EXHIBITION", "SEMINAR"
-            ));
-            typeCombo.setValue(event.getType().name());
-            typeCombo.setPrefWidth(300);
-
-            TextField locationField = new TextField(event.getLocation());
-            locationField.setPrefWidth(300);
-
-            DatePicker startDatePicker = new DatePicker(event.getStartDate());
-            startDatePicker.setPrefWidth(300);
-
-            DatePicker endDatePicker = new DatePicker(event.getEndDate());
-            endDatePicker.setPrefWidth(300);
-
-            ComboBox<String> statusCombo = new ComboBox<>();
-            statusCombo.setItems(FXCollections.observableArrayList(
-                    "SCHEDULED", "ONGOING", "COMPLETED", "CANCELLED"
-            ));
-            statusCombo.setValue(event.getStatus().name());
-            statusCombo.setPrefWidth(300);
-
-            // Image upload fields
-            Label imageLabel = new Label(event.getImagePath() != null && !event.getImagePath().isEmpty()
-                    ? "Current: " + new File(event.getImagePath()).getName()
-                    : "No image");
-            imageLabel.setStyle("-fx-text-fill: #666666; -fx-font-size: 12;");
-            Button uploadImageBtn = new Button("Change Image");
-            uploadImageBtn.setPrefWidth(300);
-
-            final String[] selectedImagePath = {null};
-
-            uploadImageBtn.setOnAction(e -> {
-                FileChooser fileChooser = new FileChooser();
-                fileChooser.setTitle("Select Event Image");
-                fileChooser.getExtensionFilters().addAll(
-                    new FileChooser.ExtensionFilter("Image Files", "*.jpg", "*.jpeg", "*.png", "*.gif", "*.bmp"),
-                    new FileChooser.ExtensionFilter("All Files", "*.*")
-                );
-                File selectedFile = fileChooser.showOpenDialog(new Stage());
-                if (selectedFile != null) {
-                    selectedImagePath[0] = selectedFile.getAbsolutePath();
-                    imageLabel.setText("New: " + selectedFile.getName());
-                    imageLabel.setStyle("-fx-text-fill: #008000; -fx-font-size: 12;");
-                }
-            });
-
-            // Create form layout
-            VBox formBox = new VBox(10);
-            formBox.setPadding(new Insets(10));
-            formBox.getChildren().addAll(
-                    new Label("Event Name:"),
-                    eventNameField,
-                    new Label("Type:"),
-                    typeCombo,
-                    new Label("Location:"),
-                    locationField,
-                    new Label("Start Date:"),
-                    startDatePicker,
-                    new Label("End Date:"),
-                    endDatePicker,
-                    new Label("Status:"),
-                    statusCombo,
-                    new Label("Event Image:"),
-                    uploadImageBtn,
-                    imageLabel
-            );
-
-            dialog.getDialogPane().setContent(formBox);
-            dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
-
-            if (dialog.showAndWait().isPresent() && dialog.showAndWait().get() == ButtonType.OK) {
-                // Validate inputs
-                String eventName = eventNameField.getText();
-                String type = typeCombo.getValue();
-                String location = locationField.getText();
-                LocalDate startDate = startDatePicker.getValue();
-                LocalDate endDate = endDatePicker.getValue();
-                String status = statusCombo.getValue();
-
-                if (eventName.isBlank() || location.isBlank() || startDate == null || endDate == null) {
-                    showAlert("Validation Error", "Please fill in all required fields");
-                    return;
-                }
-
-                if (endDate.isBefore(startDate)) {
-                    showAlert("Validation Error", "End date must be after start date");
-                    return;
-                }
-
-                // Update event
-                event.setName(eventName);
-                event.setType(EventType.valueOf(type));
-                event.setLocation(location);
-                event.setStartDate(startDate);
-                event.setEndDate(endDate);
-                event.setStatus(EventStatus.valueOf(status));
-
-                eventRepo.save(event);
-
-                // Upload new image if selected
-                if (selectedImagePath[0] != null && !selectedImagePath[0].isEmpty()) {
-                    boolean imageUploadSuccess = eventService.uploadEventImage(selectedImagePath[0], event.getId());
-                    if (imageUploadSuccess) {
-                        showAlert("Success", "Event updated successfully with new image!");
-                    } else {
-                        showAlert("Warning", "Event updated but image upload failed.");
-                    }
-                } else {
-                    showAlert("Success", "Event '" + eventName + "' updated successfully!");
-                }
-
-                loadAllEventsAsync(); // Refresh table
-
-            }
-        } catch (Exception e) {
-            showAlert("Error", "Failed to edit event: " + e.getMessage());
-            System.err.println("Edit event error: " + e.getMessage());
-            e.printStackTrace(System.err);
+        // Load full event
+        var event = crudService.getEvent(selected.eventId);
+        if (event == null) {
+            showAlert("Error", "Event not found");
+            return;
         }
+
+        EventFormData formData = showEventFormDialog(event);
+        if (formData == null) {
+            return;  // User cancelled
+        }
+
+        // Validate
+        var validation = validationService.validate(formData.dto.name, formData.dto.location,
+                formData.dto.startDate, formData.dto.endDate);
+        if (!validation.valid) {
+            showAlert("Validation Error", validation.message);
+            return;
+        }
+
+        // Update in async task
+        Task<EventCRUDResultDTO> task = new Task<>() {
+            @Override
+            protected EventCRUDResultDTO call() {
+                try {
+                    // Step 1: Handle image upload if a new image is selected
+                    String imageUrlToUse = event.getImagePath();  // Keep existing image by default
+
+                    if (formData.imagePath != null && !formData.imagePath.isEmpty()) {
+                        // User selected a new image - upload it
+                        String newImageUrl = imageService.uploadImage(formData.imagePath, event.getId());
+                        if (newImageUrl != null) {
+                            System.out.println("[ManageEventsController] New image uploaded to R2: " + newImageUrl);
+                            imageUrlToUse = newImageUrl;  // Use new image
+                        } else {
+                            System.out.println("[ManageEventsController] Image upload failed - keeping existing image");
+                            // Keep the existing image if upload fails
+                        }
+                    }
+
+                    // Step 2: Update event with the image URL to use
+                    var updated = crudService.updateEvent(
+                            event.getId(),
+                            formData.dto.name, formData.dto.type, formData.dto.location,
+                            formData.dto.startDate, formData.dto.endDate, formData.dto.status,
+                            imageUrlToUse
+                    );
+
+                    if (formData.imagePath != null && !formData.imagePath.isEmpty()) {
+                        return EventCRUDResultDTO.success("Event updated successfully with new image!", "UPDATE");
+                    } else {
+                        return EventCRUDResultDTO.success("Event '" + updated.getName() + "' updated successfully!", "UPDATE");
+                    }
+
+                } catch (Exception e) {
+                    System.err.println("[ManageEventsController] Error updating event: " + e.getMessage());
+                    e.printStackTrace();
+                    return EventCRUDResultDTO.error("Failed to update event: " + e.getMessage(), "UPDATE");
+                }
+            }
+        };
+
+        task.setOnSucceeded(evt -> {
+            EventCRUDResultDTO result = task.getValue();
+            showAlert(result.success ? "Success" : "Error", result.message);
+            if (result.success) {
+                filterService.invalidateCache();
+                loadEventsAsync();
+            }
+        });
+
+        new Thread(task, "update-event-task").start();
     }
 
+    /**
+     * Delete selected event
+     */
     @FXML
     public void onDeleteEvent() {
-        EventRow selected = eventsTable.getSelectionModel().getSelectedItem();
+        EventRowDTO selected = eventsTable.getSelectionModel().getSelectedItem();
         if (selected == null) {
             showAlert("Warning", "Please select an event to delete");
             return;
         }
 
-        // Show confirmation dialog
         Alert confirmDialog = new Alert(Alert.AlertType.CONFIRMATION);
         confirmDialog.setTitle("Confirm Delete");
         confirmDialog.setHeaderText("Delete Event - " + selected.name);
@@ -519,51 +403,171 @@ public class ManageEventsController {
         );
 
         if (confirmDialog.showAndWait().isPresent() && confirmDialog.showAndWait().get() == ButtonType.OK) {
-            try {
-                UUID eventId = UUID.fromString(selected.id);
-                eventRepo.delete(eventId);
+            System.out.println("[ManageEventsController] onDeleteEvent: " + selected.name);
 
-                showAlert("Success", "Event '" + selected.name + "' has been deleted successfully!");
-                // Dùng hàm async tối ưu thay cho hàm cũ không tồn tại
-                loadAllEventsAsync(); // Refresh table
+            Task<EventCRUDResultDTO> task = new Task<>() {
+                @Override
+                protected EventCRUDResultDTO call() {
+                    try {
+                        crudService.deleteEvent(selected.eventId);
+                        return EventCRUDResultDTO.success("Event '" + selected.name + "' deleted successfully!", "DELETE");
+                    } catch (Exception e) {
+                        return EventCRUDResultDTO.error("Failed to delete event: " + e.getMessage(), "DELETE");
+                    }
+                }
+            };
 
-            } catch (Exception e) {
-                showAlert("Error", "Failed to delete event: " + e.getMessage());
-                System.err.println("Delete event error: " + e.getMessage());
-                e.printStackTrace(System.err);
-            }
+            task.setOnSucceeded(evt -> {
+                EventCRUDResultDTO result = task.getValue();
+                showAlert(result.success ? "Success" : "Error", result.message);
+                if (result.success) {
+                    filterService.invalidateCache();
+                    loadEventsAsync();
+                }
+            });
+
+            new Thread(task, "delete-event-task").start();
         }
     }
 
+    /**
+     * View sessions for event
+     */
     @FXML
     public void onViewSessions() {
-        EventRow selected = eventsTable.getSelectionModel().getSelectedItem();
+        EventRowDTO selected = eventsTable.getSelectionModel().getSelectedItem();
         if (selected == null) {
-            showAlert("Warning", "Please select an event to view sessions");
+            showAlert("Warning", "Please select an event");
             return;
         }
-        System.out.println("View Sessions for event: " + selected.name);
-        // TODO: Implement view sessions page
         showAlert("Info", "View Sessions feature coming soon!");
     }
 
+    /**
+     * View event details
+     */
     @FXML
     public void onViewDetails() {
-        EventRow selected = eventsTable.getSelectionModel().getSelectedItem();
+        EventRowDTO selected = eventsTable.getSelectionModel().getSelectedItem();
         if (selected == null) {
-            showAlert("Warning", "Please select an event to view details");
+            showAlert("Warning", "Please select an event");
             return;
         }
-        System.out.println("View Details for event: " + selected.name);
-        // TODO: Implement view details page
         showAlert("Info", "View Details feature coming soon!");
     }
 
+    /**
+     * Navigate back to dashboard
+     */
     @FXML
     public void onBack() {
         SceneManager.switchTo("admin_dashboard.fxml", "Event Manager System - Admin Dashboard");
     }
 
+    /**
+     * Show event form dialog (create or edit)
+     */
+    private EventFormData showEventFormDialog(org.ems.domain.model.Event editEvent) {
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle(editEvent == null ? "Create New Event" : "Edit Event");
+        dialog.setHeaderText(editEvent == null ? "Create a new event" : "Edit event: " + editEvent.getName());
+
+        // Form fields
+        TextField nameField = new TextField(editEvent != null ? editEvent.getName() : "");
+        nameField.setPromptText("Event Name");
+        nameField.setPrefWidth(300);
+
+        ComboBox<String> typeCombo = new ComboBox<>();
+        typeCombo.setItems(FXCollections.observableArrayList(
+                "CONFERENCE", "WORKSHOP", "CONCERT", "EXHIBITION", "SEMINAR"
+        ));
+        typeCombo.setValue(editEvent != null ? editEvent.getType().name() : "CONFERENCE");
+        typeCombo.setPrefWidth(300);
+
+        TextField locationField = new TextField(editEvent != null ? editEvent.getLocation() : "");
+        locationField.setPromptText("Location");
+        locationField.setPrefWidth(300);
+
+        DatePicker startDatePicker = new DatePicker(editEvent != null ? editEvent.getStartDate() : LocalDate.now());
+        startDatePicker.setPrefWidth(300);
+
+        DatePicker endDatePicker = new DatePicker(editEvent != null ? editEvent.getEndDate() : LocalDate.now().plusDays(1));
+        endDatePicker.setPrefWidth(300);
+
+        ComboBox<String> statusCombo = new ComboBox<>();
+        statusCombo.setItems(FXCollections.observableArrayList(
+                "SCHEDULED", "ONGOING", "COMPLETED", "CANCELLED"
+        ));
+        statusCombo.setValue(editEvent != null ? editEvent.getStatus().name() : "SCHEDULED");
+        statusCombo.setPrefWidth(300);
+
+        // Image upload
+        Label imageLabel = new Label(
+                editEvent != null && editEvent.getImagePath() != null && !editEvent.getImagePath().isEmpty()
+                        ? "Current: " + new File(editEvent.getImagePath()).getName()
+                        : "No image"
+        );
+        imageLabel.setStyle("-fx-text-fill: #666666; -fx-font-size: 12;");
+
+        Button uploadImageBtn = new Button(editEvent != null ? "Change Image" : "Select Image");
+        uploadImageBtn.setPrefWidth(300);
+
+        final String[] selectedImagePath = {null};
+
+        uploadImageBtn.setOnAction(e -> {
+            File selectedFile = imageService.selectImageFile(new Stage());
+            if (selectedFile != null) {
+                selectedImagePath[0] = selectedFile.getAbsolutePath();
+                imageLabel.setText("Selected: " + selectedFile.getName());
+                imageLabel.setStyle("-fx-text-fill: #008000; -fx-font-size: 12;");
+            }
+        });
+
+        // Form layout
+        VBox formBox = new VBox(10);
+        formBox.setPadding(new Insets(10));
+        formBox.getChildren().addAll(
+                new Label("Event Name:"),
+                nameField,
+                new Label("Type:"),
+                typeCombo,
+                new Label("Location:"),
+                locationField,
+                new Label("Start Date:"),
+                startDatePicker,
+                new Label("End Date:"),
+                endDatePicker,
+                new Label("Status:"),
+                statusCombo,
+                new Label("Event Image:"),
+                uploadImageBtn,
+                imageLabel
+        );
+
+        dialog.getDialogPane().setContent(formBox);
+        dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+
+        if (dialog.showAndWait().isPresent() && dialog.showAndWait().get() == ButtonType.OK) {
+            return new EventFormData(
+                    new EventFormDataDTO(
+                            nameField.getText(),
+                            typeCombo.getValue(),
+                            locationField.getText(),
+                            startDatePicker.getValue(),
+                            endDatePicker.getValue(),
+                            statusCombo.getValue(),
+                            null
+                    ),
+                    selectedImagePath[0]
+            );
+        }
+
+        return null;
+    }
+
+    /**
+     * Helper: Show alert dialog
+     */
     private void showAlert(String title, String message) {
         Alert alert = new Alert(Alert.AlertType.INFORMATION);
         alert.setTitle(title);
@@ -572,27 +576,17 @@ public class ManageEventsController {
         alert.showAndWait();
     }
 
-    // Helper class for displaying event data in table
-    public static class EventRow {
-        public String id;
-        public String name;
-        public String type;
-        public String location;
-        public String startDate;
-        public String endDate;
-        public String status;
-        public int sessionCount;
+    /**
+     * Helper class: Form data with image path
+     */
+    private static class EventFormData {
+        EventFormDataDTO dto;
+        String imagePath;
 
-        public EventRow(String id, String name, String type, String location,
-                        String startDate, String endDate, String status, int sessionCount) {
-            this.id = id;
-            this.name = name;
-            this.type = type;
-            this.location = location;
-            this.startDate = startDate;
-            this.endDate = endDate;
-            this.status = status;
-            this.sessionCount = sessionCount;
+        EventFormData(EventFormDataDTO dto, String imagePath) {
+            this.dto = dto;
+            this.imagePath = imagePath;
         }
     }
 }
+

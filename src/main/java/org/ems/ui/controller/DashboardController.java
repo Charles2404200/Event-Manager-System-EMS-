@@ -19,11 +19,30 @@ import org.ems.domain.model.enums.Role;
 import org.ems.ui.stage.SceneManager;
 import org.ems.ui.util.AsyncTaskService;
 import org.ems.ui.util.LoadingDialog;
+import org.ems.application.service.UserProfileService;
+import org.ems.application.service.DashboardAttendeeService;
+import org.ems.application.service.DashboardPresenterService;
+import org.ems.application.service.DashboardEventAdminService;
+import org.ems.application.service.DashboardEventFilteringService;
+import org.ems.application.dto.DashboardAttendeeContentDTO;
+import org.ems.application.dto.DashboardPresenterContentDTO;
+import org.ems.application.dto.DashboardEventAdminContentDTO;
+import javafx.scene.control.ComboBox;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import javafx.stage.FileChooser;
+import javafx.stage.Stage;
+import java.io.File;
 
-
+/**
+ * Dashboard Controller - SOLID REFACTORED
+ * - Single Responsibility: UI coordination only
+ * - Dependency Injection: Services injected via AppContext
+ * - Delegation: Business logic delegated to appropriate services
+ * - Clean Architecture: Separated concerns between UI, Services, and Data layers
+ * @author <your group number>
+ */
 public class DashboardController {
 
     @FXML private Label userNameLabel;
@@ -42,17 +61,53 @@ public class DashboardController {
     private Role userRole;
     private LoadingDialog loadingDialog;
 
+    // Injected Services
+    private UserProfileService userProfileService;
+    private DashboardAttendeeService dashboardAttendeeService;
+    private DashboardPresenterService dashboardPresenterService;
+    private DashboardEventAdminService dashboardEventAdminService;
+    private DashboardEventFilteringService dashboardEventFilteringService;
+
     @FXML
     public void initialize() {
-        loadUserInfo();
-        setupRoleBasedView();
-        loadDynamicContentAsync();
+        long initStart = System.currentTimeMillis();
+        System.out.println(" [DashboardController] initialize() starting...");
+
+        try {
+            // Inject services from AppContext
+            long serviceStart = System.currentTimeMillis();
+            userProfileService = new UserProfileService();
+            dashboardAttendeeService = new DashboardAttendeeService(appContext.ticketRepo, appContext.eventRepo);
+            dashboardPresenterService = new DashboardPresenterService(appContext.sessionRepo);
+            dashboardEventAdminService = new DashboardEventAdminService(
+                    appContext.eventRepo, appContext.sessionRepo, appContext.ticketRepo);
+            dashboardEventFilteringService = new DashboardEventFilteringService();
+            System.out.println("  ✓ Services initialized in " + (System.currentTimeMillis() - serviceStart) + "ms");
+
+            // Load user info
+            loadUserInfo();
+
+            // Setup role-based UI
+            setupRoleBasedView();
+
+            // Load dynamic content asynchronously
+            loadDynamicContentAsync();
+
+            System.out.println("✓ Dashboard initialized in " + (System.currentTimeMillis() - initStart) + "ms");
+
+        } catch (Exception e) {
+            System.err.println("✗ initialize() failed: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 
     /**
      * Load current user information from AppContext
      */
     private void loadUserInfo() {
+        long start = System.currentTimeMillis();
+        System.out.println("👤 [DashboardController] Loading user info...");
+
         currentUser = appContext.currentUser;
 
         if (currentUser == null) {
@@ -65,16 +120,19 @@ public class DashboardController {
 
         // Display user information
         userNameLabel.setText("Welcome, " + currentUser.getFullName());
-        userRoleLabel.setText("Role: " + getRoleDisplayName(userRole));
+        userRoleLabel.setText("Role: " + userProfileService.getRoleDisplayName(userRole));
         userEmailLabel.setText(currentUser.getEmail());
+
+        System.out.println("  ✓ User info loaded in " + (System.currentTimeMillis() - start) + "ms");
     }
 
     /**
      * Load dynamic content based on user role - asynchronously
+     * Delegates all business logic to services
      */
     private void loadDynamicContentAsync() {
         long dashStart = System.currentTimeMillis();
-        System.out.println("📊 [Dashboard] loadDynamicContentAsync() starting...");
+        System.out.println("📊 [DashboardController] loadDynamicContentAsync() starting...");
 
         // Get the primary stage safely
         javafx.stage.Stage primaryStage = null;
@@ -93,26 +151,25 @@ public class DashboardController {
         }
 
         AsyncTaskService.runAsync(
-                // Background task
+                // Background task - delegate to services
                 () -> {
                     long taskStart = System.currentTimeMillis();
                     System.out.println("  🔄 [Background] Loading content for role: " + userRole);
                     try {
                         switch (userRole) {
                             case ATTENDEE:
-                                loadAttendeeContent();
+                                loadAttendeeContentViaService();
                                 System.out.println("  ✓ Attendee content loaded in " + (System.currentTimeMillis() - taskStart) + " ms");
                                 break;
                             case PRESENTER:
-                                loadPresenterContent();
+                                loadPresenterContentViaService();
                                 System.out.println("  ✓ Presenter content loaded in " + (System.currentTimeMillis() - taskStart) + " ms");
                                 break;
                             case EVENT_ADMIN:
-                                loadEventAdminContent();
+                                loadEventAdminContentViaService();
                                 System.out.println("  ✓ Event admin content loaded in " + (System.currentTimeMillis() - taskStart) + " ms");
                                 break;
                             case SYSTEM_ADMIN:
-                                // No dynamic content needed for now
                                 System.out.println("  ✓ System admin - no dynamic content");
                                 break;
                         }
@@ -142,13 +199,13 @@ public class DashboardController {
     }
 
     /**
-     * Load attendee's upcoming events and tickets - OPTIMIZED: Batch load, single pass
+     * Load attendee content via service
+     * Delegates all business logic to DashboardAttendeeService
      */
-    private void loadAttendeeContent() {
-        long contentStart = System.currentTimeMillis();
+    private void loadAttendeeContentViaService() {
         try {
-            if (!(currentUser instanceof Attendee) || appContext.ticketRepo == null || appContext.eventRepo == null) {
-                System.out.println("  ⚠️ Missing attendee context");
+            if (!(currentUser instanceof Attendee)) {
+                System.out.println("  ⚠️ User is not attendee");
                 return;
             }
 
@@ -159,120 +216,74 @@ public class DashboardController {
                 return;
             }
 
-            // BATCH LOAD: Get all data in 3 queries (not nested)
-            long batchStart = System.currentTimeMillis();
-            List<Ticket> tickets = appContext.ticketRepo.findByAttendee(attendee.getId());
-            long ticketTime = System.currentTimeMillis() - batchStart;
-            System.out.println("  ✓ Tickets loaded in " + ticketTime + " ms: " + tickets.size());
-
-            if (tickets.isEmpty()) {
-                Platform.runLater(() -> {
-                    Label noEventsLabel = new Label("No upcoming events - Browse and register for events to see them here");
-                    noEventsLabel.setStyle("-fx-font-size: 12; -fx-text-fill: #999;");
-                    upcomingEventsBox.getChildren().clear();
-                    upcomingEventsBox.getChildren().add(noEventsLabel);
-                });
-                System.out.println("  ✓ No tickets, UI updated");
-                return;
-            }
-
-            // Load all events ONCE
-            long eventsStart = System.currentTimeMillis();
-            List<Event> allEvents = appContext.eventRepo.findAll();
-            long eventsTime = System.currentTimeMillis() - eventsStart;
-            System.out.println("  ✓ All events loaded in " + eventsTime + " ms: " + allEvents.size());
-
-            // OPTIMIZED: Single pass - collect upcoming events in-memory
-            long filterStart = System.currentTimeMillis();
-            java.time.LocalDate today = java.time.LocalDate.now();
-
-            // Create eventId -> Event map for O(1) lookup
-            java.util.Map<java.util.UUID, Event> eventMap = new java.util.HashMap<>();
-            for (Event event : allEvents) {
-                eventMap.put(event.getId(), event);
-            }
-
-            // Filter upcoming events
-            List<Event> upcomingEvents = new java.util.ArrayList<>();
-            java.util.Set<java.util.UUID> ticketedEventIds = new java.util.HashSet<>();
-
-            for (Ticket ticket : tickets) {
-                if (ticket.getEventId() != null && !ticketedEventIds.contains(ticket.getEventId())) {
-                    Event event = eventMap.get(ticket.getEventId());
-                    if (event != null && event.getStartDate() != null && event.getStartDate().isAfter(today)) {
-                        upcomingEvents.add(event);
-                        ticketedEventIds.add(event.getId());
-                    }
-                }
-            }
-
-            long filterTime = System.currentTimeMillis() - filterStart;
-            System.out.println("  ✓ Filtered to " + upcomingEvents.size() + " upcoming events in " + filterTime + " ms");
-
-            // Sort by date
-            upcomingEvents.sort((e1, e2) -> {
-                if (e1.getStartDate() == null || e2.getStartDate() == null) return 0;
-                return e1.getStartDate().compareTo(e2.getStartDate());
-            });
+            // Delegate to service
+            DashboardAttendeeContentDTO content = dashboardAttendeeService.loadAttendeeContent(attendee);
 
             // Update UI on FX thread
             Platform.runLater(() -> {
                 long uiStart = System.currentTimeMillis();
-                updateUpcomingEventsDisplay(upcomingEventsBox, upcomingEvents);
+                updateUpcomingEventsDisplay(upcomingEventsBox, content.getUpcomingEvents());
                 System.out.println("  ✓ UI updated in " + (System.currentTimeMillis() - uiStart) + " ms");
             });
 
-            System.out.println("  ✓ loadAttendeeContent completed in " + (System.currentTimeMillis() - contentStart) + " ms");
-
-        } catch (Exception e) {
+        } catch (DashboardAttendeeService.DashboardException e) {
             System.err.println("Error loading attendee content: " + e.getMessage());
-            e.printStackTrace();
+            Platform.runLater(() -> {
+                VBox upcomingEventsBox = findVBoxByTitle(attendeeSection, "Your Upcoming Events");
+                if (upcomingEventsBox != null) {
+                    Label errorLabel = new Label("Error loading events: " + e.getMessage());
+                    errorLabel.setStyle("-fx-font-size: 12; -fx-text-fill: #e74c3c;");
+                    upcomingEventsBox.getChildren().clear();
+                    upcomingEventsBox.getChildren().add(errorLabel);
+                }
+            });
         }
     }
 
 
     /**
-     * Load presenter's assigned sessions
+     * Load presenter content via service
+     * Delegates all business logic to DashboardPresenterService
      */
-    private void loadPresenterContent() {
+    private void loadPresenterContentViaService() {
         try {
-            if (currentUser instanceof Presenter && appContext.sessionRepo != null) {
-                Presenter presenter = (Presenter) currentUser;
-
-                long finalTotalAssigned = appContext.sessionRepo.countByPresenter(presenter.getId());
-
-                Platform.runLater(() -> {
-                    if (nOAssignedSessions != null) {
-                        nOAssignedSessions.setText(String.valueOf(finalTotalAssigned));
-                    }
-                });
-
-                System.out.println("Presenter " + presenter.getFullName()
-                        + " has " + finalTotalAssigned + " assigned sessions.");
-
-
-                // Filter sessions assigned to this presenter
-                // Note: This requires checking presenter_session mapping table
-                // For now, we'll display info
+            if (!(currentUser instanceof Presenter)) {
+                System.out.println("  ⚠️ User is not presenter");
+                return;
             }
-        } catch (Exception e) {
+
+            Presenter presenter = (Presenter) currentUser;
+
+            // Delegate to service
+            DashboardPresenterContentDTO content = dashboardPresenterService.loadPresenterContent(presenter);
+
+            // Update UI on FX thread
+            Platform.runLater(() -> {
+                if (nOAssignedSessions != null) {
+                    nOAssignedSessions.setText(String.valueOf(content.getAssignedSessionsCount()));
+                }
+                System.out.println("  ✓ Presenter UI updated with " + content.getAssignedSessionsCount() + " sessions");
+            });
+
+        } catch (DashboardPresenterService.DashboardPresenterException e) {
             System.err.println("Error loading presenter content: " + e.getMessage());
         }
     }
 
     /**
-     * Load event admin's event statistics
+     * Load event admin content via service
+     * Delegates all business logic to DashboardEventAdminService
      */
-    private void loadEventAdminContent() {
+    private void loadEventAdminContentViaService() {
         try {
-            if (appContext.eventRepo != null && appContext.sessionRepo != null && appContext.ticketRepo != null) {
-                int totalEvents = appContext.eventRepo.findAll().size();
-                int totalSessions = appContext.sessionRepo.findAll().size();
-                int totalTickets = appContext.ticketRepo.findAll().size();
+            // Delegate to service
+            DashboardEventAdminContentDTO content = dashboardEventAdminService.loadEventAdminContent();
 
-                System.out.println("Event Admin - Events: " + totalEvents + ", Sessions: " + totalSessions + ", Tickets: " + totalTickets);
-            }
-        } catch (Exception e) {
+            System.out.println("  ℹ Event Admin - Events: " + content.getTotalEvents() +
+                             ", Sessions: " + content.getTotalSessions() +
+                             ", Tickets: " + content.getTotalTickets());
+
+        } catch (DashboardEventAdminService.DashboardEventAdminException e) {
             System.err.println("Error loading event admin content: " + e.getMessage());
         }
     }
@@ -415,23 +426,6 @@ public class DashboardController {
         }
     }
 
-    /**
-     * Get human-readable role name
-     */
-    private String getRoleDisplayName(Role role) {
-        switch (role) {
-            case ATTENDEE:
-                return "Event Attendee";
-            case PRESENTER:
-                return "Presenter";
-            case EVENT_ADMIN:
-                return "Event Administrator";
-            case SYSTEM_ADMIN:
-                return "System Administrator";
-            default:
-                return "Unknown";
-        }
-    }
 
     // ==================== ATTENDEE ACTIONS ====================
     @FXML
@@ -472,8 +466,19 @@ public class DashboardController {
 
     @FXML
     public void onUploadMaterials() {
-        // TODO: Upload session materials
-        System.out.println("Upload Materials clicked");
+        // Example: Prompt for file and session, then upload
+        String filePath = promptForMaterialFile(); // Implement file chooser
+        String sessionId = promptForSessionId();   // Implement session selection
+        if (filePath != null && sessionId != null) {
+            try {
+                String materialPath = dashboardPresenterService.uploadSessionMaterial(sessionId, filePath);
+                System.out.println("Material uploaded: " + materialPath);
+                // Optionally show success dialog or update UI
+            } catch (DashboardPresenterService.DashboardPresenterException e) {
+                System.err.println("Material upload failed: " + e.getMessage());
+                // Optionally show error dialog
+            }
+        }
     }
 
     @FXML
@@ -583,5 +588,47 @@ public class DashboardController {
         appContext.currentUser = null;
         appContext.currentUserRole = "VISITOR";
         SceneManager.switchTo("home.fxml", "EMS - Home");
+    }
+
+    // Helper stubs for file/session selection
+    private String promptForMaterialFile() {
+        try {
+            Stage stage = (Stage) presenterSection.getScene().getWindow();
+            FileChooser fileChooser = new FileChooser();
+            fileChooser.setTitle("Chọn file tài liệu để upload");
+            fileChooser.getExtensionFilters().addAll(
+                new FileChooser.ExtensionFilter("Tài liệu", "*.pdf", "*.ppt", "*.pptx", "*.doc", "*.docx", "*.xls", "*.xlsx", "*.txt")
+            );
+            File selectedFile = fileChooser.showOpenDialog(stage);
+            if (selectedFile != null) {
+                return selectedFile.getAbsolutePath();
+            }
+        } catch (Exception e) {
+            System.err.println("Không thể chọn file: " + e.getMessage());
+        }
+        return null;
+    }
+
+    private String promptForSessionId() {
+        if (currentUser instanceof Presenter) {
+            List<Session> sessions = appContext.sessionRepo.findByPresenter(currentUser.getId(), 0, 50);
+            if (sessions == null || sessions.isEmpty()) return null;
+            if (sessions.size() == 1) return sessions.get(0).getId().toString();
+            List<String> sessionTitles = sessions.stream().map(Session::getTitle).toList();
+            javafx.scene.control.ChoiceDialog<String> dialog = new javafx.scene.control.ChoiceDialog<>(sessionTitles.get(0), sessionTitles);
+            dialog.setTitle("Chọn session để upload tài liệu");
+            dialog.setHeaderText("Vui lòng chọn một session");
+            dialog.setContentText("Session:");
+            java.util.Optional<String> result = dialog.showAndWait();
+            if (result.isPresent()) {
+                String selectedTitle = result.get();
+                for (Session s : sessions) {
+                    if (s.getTitle().equals(selectedTitle)) {
+                        return s.getId().toString();
+                    }
+                }
+            }
+        }
+        return null;
     }
 }

@@ -21,11 +21,10 @@ public class JdbcSessionRepository implements SessionRepository {
     // -------------------------------------------------------
     @Override
     public Session save(Session s) {
-
         String sql = """
             INSERT INTO sessions
-            (id, event_id, title, description, start_time, end_time, venue, capacity)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (id, event_id, title, description, start_time, end_time, venue, capacity, material_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (id) DO UPDATE SET
                 event_id     = EXCLUDED.event_id,
                 title        = EXCLUDED.title,
@@ -33,11 +32,11 @@ public class JdbcSessionRepository implements SessionRepository {
                 start_time   = EXCLUDED.start_time,
                 end_time     = EXCLUDED.end_time,
                 venue        = EXCLUDED.venue,
-                capacity     = EXCLUDED.capacity
+                capacity     = EXCLUDED.capacity,
+                material_path = EXCLUDED.material_path
         """;
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
-
             ps.setObject(1, s.getId());
             ps.setObject(2, s.getEventId());
             ps.setString(3, s.getTitle());
@@ -46,13 +45,10 @@ public class JdbcSessionRepository implements SessionRepository {
             ps.setObject(6, s.getEnd());
             ps.setString(7, s.getVenue());
             ps.setInt(8, s.getCapacity());
-
+            ps.setString(9, s.getMaterialPath());
             ps.executeUpdate();
-
             savePresenterLinks(s);
-
             return s;
-
         } catch (SQLException e) {
             throw new RuntimeException("Failed to save session", e);
         }
@@ -618,6 +614,40 @@ public class JdbcSessionRepository implements SessionRepository {
         return list;
     }
 
+    @Override
+    public List<Session> findSessionsByAttendeeAndEvent(UUID attendeeId, UUID eventId) {
+        List<Session> list = new ArrayList<>();
+        String sql = """
+            SELECT s.* FROM sessions s
+            INNER JOIN attendee_session ats ON s.id = ats.session_id
+            WHERE ats.attendee_id = ? AND s.event_id = ?
+            ORDER BY s.start_time ASC
+        """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setObject(1, attendeeId);
+            ps.setObject(2, eventId);
+            ResultSet rs = ps.executeQuery();
+            Map<UUID, Session> sessionMap = new LinkedHashMap<>();
+            while (rs.next()) {
+                Session s = mapRow(rs);
+                sessionMap.put(s.getId(), s);
+            }
+            if (!sessionMap.isEmpty()) {
+                loadPresenterIdsOptimized(sessionMap);
+            }
+            list.addAll(sessionMap.values());
+        } catch (SQLException e) {
+            System.err.println("Error finding sessions for attendee and event: " + e.getMessage());
+            throw new RuntimeException("Failed to find sessions for attendee and event", e);
+        }
+        return list;
+    }
+
+    @Override
+    public void cancelAttendeeSession(UUID attendeeId, UUID sessionId) {
+        unregisterAttendeeFromSession(attendeeId, sessionId);
+    }
+
     // -------------------------------------------------------
     // MAPPER
     // -------------------------------------------------------
@@ -633,6 +663,7 @@ public class JdbcSessionRepository implements SessionRepository {
         s.setEnd(rs.getObject("end_time", LocalDateTime.class));
         s.setVenue(rs.getString("venue"));
         s.setCapacity(rs.getInt("capacity"));
+        s.setMaterialPath(rs.getString("material_path"));
 
         return s;
     }

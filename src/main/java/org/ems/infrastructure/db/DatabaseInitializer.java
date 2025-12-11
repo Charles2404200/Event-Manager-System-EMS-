@@ -1,9 +1,5 @@
 package org.ems.infrastructure.db;
 
-/**
- * @author <your group number>
- */
-
 import org.ems.config.DatabaseConfig;
 
 import java.io.InputStream;
@@ -11,7 +7,15 @@ import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.Statement;
 
+/**
+ * Database initialization class
+ * Handles schema creation and optional data seeding
+ *
+ * @author <your group number>
+ */
 public class DatabaseInitializer {
+    // Flag to control whether to seed data on initialization
+    private static final boolean AUTO_SEED_DATA = false;  // Set to true to auto-seed on startup
 
     public static void initialize() {
         try (Connection conn = DatabaseConfig.getConnection()) {
@@ -25,14 +29,40 @@ public class DatabaseInitializer {
                     return;
                 }
                 String sql = new String(in.readAllBytes(), StandardCharsets.UTF_8);
-                try (Statement st = conn.createStatement()) {
-                    st.execute(sql);
-                }
-            }
-            System.out.println("✓ Database schema initialized successfully.");
 
-            // Seed admin user
+                // Split by semicolon and execute each statement separately
+                String[] statements = sql.split(";");
+                int successCount = 0;
+
+                try (Statement st = conn.createStatement()) {
+                    for (String statement : statements) {
+                        String trimmed = statement.trim();
+                        if (trimmed.isEmpty()) {
+                            continue;
+                        }
+                        try {
+                            st.execute(trimmed);
+                            successCount++;
+                        } catch (Exception e) {
+                            // Log but continue - some statements might fail (e.g., IF NOT EXISTS that already exist)
+                            System.out.println("  ⚠ Statement skipped: " + trimmed.substring(0, Math.min(50, trimmed.length())) + "... (" + e.getMessage() + ")");
+                        }
+                    }
+                }
+                System.out.println("✓ Database schema initialized successfully (" + successCount + " statements executed).");
+            }
+
+            // Seed admin user (always seed to ensure admin exists)
             DataSeeder.seedAdminUser();
+
+            // Seed sample data only if AUTO_SEED_DATA is enabled
+            if (AUTO_SEED_DATA) {
+                System.out.println("\n✓ Auto-seeding data (AUTO_SEED_DATA = true)");
+                DataSeeder.seedSampleData();
+            } else {
+                System.out.println("\n ℹ Data seeding disabled (AUTO_SEED_DATA = false)");
+                System.out.println("   To seed data manually, call: DataSeeder.seedSampleData()");
+            }
 
         } catch (Exception e) {
             System.err.println("\n╔════════════════════════════════════════════════════╗");
@@ -53,5 +83,19 @@ public class DatabaseInitializer {
             // In production, you might want to throw here
         }
     }
-}
 
+    /**
+     * Manually seed sample data to database
+     * Call this to populate database with test data
+     */
+    public static void seedSampleData() {
+        DataSeeder.seedSampleData();
+    }
+
+    /**
+     * Check if should auto-seed data on startup
+     */
+    public static boolean isAutoSeedEnabled() {
+        return AUTO_SEED_DATA;
+    }
+}
