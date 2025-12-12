@@ -1,4 +1,4 @@
-package org.ems.application.controller.impl;
+package org.ems.application.controller;
 
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;

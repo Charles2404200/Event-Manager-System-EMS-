@@ -3,6 +3,9 @@ package org.ems.application.controller;
 import javafx.concurrent.Task;
 import javafx.fxml.FXML;
 import javafx.scene.control.Label;
+import javafx.scene.control.Button;
+import org.ems.application.service.auth.RoleAuthorizationService;
+import org.ems.domain.model.enums.Role;
 import org.ems.infrastructure.config.AppContext;
 import org.ems.infrastructure.repository.jdbc.JdbcEventRepository;
 import org.ems.ui.stage.SceneManager;
@@ -23,13 +26,63 @@ public class AdminDashboardController {
     @FXML private Label dbStatusLabel;
     @FXML private Label lastUpdateLabel;
 
+    // Menu buttons
+    @FXML private Button manageUsersBtn;
+    @FXML private Button managePresentersBtn;
+    @FXML private Button settingsBtn;
+
+    private AppContext appContext;
+
     @FXML
     public void initialize() {
-        AppContext ctx = AppContext.get();
-        String adminUsername = ctx.currentUser != null ? ctx.currentUser.getUsername() : "admin";
-        adminInfoLabel.setText("Logged in as: " + adminUsername + " (SYSTEM_ADMIN)");
+        appContext = AppContext.get();
+        String adminUsername = appContext.currentUser != null ? appContext.currentUser.getUsername() : "admin";
+        String roleDisplay = RoleAuthorizationService.getRoleDisplayName(appContext.currentUser);
+
+        adminInfoLabel.setText("Logged in as: " + adminUsername + " (" + roleDisplay + ")");
+
+        // Restrict features based on role
+        restrictFeaturesByRole();
 
         loadStatisticsAsync();
+    }
+
+    /**
+     * Restrict UI features based on user role
+     */
+    private void restrictFeaturesByRole() {
+        if (appContext.currentUser == null) {
+            return;
+        }
+
+        boolean isSystemAdmin = appContext.currentUser.getRole() == Role.SYSTEM_ADMIN;
+        boolean isEventAdmin = appContext.currentUser.getRole() == Role.EVENT_ADMIN;
+
+        // EVENT_ADMIN cannot manage users
+        if (manageUsersBtn != null) {
+            manageUsersBtn.setDisable(!isSystemAdmin);
+            manageUsersBtn.setStyle(isSystemAdmin ?
+                "-fx-padding: 10; -fx-font-size: 12; -fx-cursor: hand;" :
+                "-fx-padding: 10; -fx-font-size: 12; -fx-opacity: 0.5; -fx-cursor: not-allowed;");
+        }
+
+        // EVENT_ADMIN cannot manage presenters
+        if (managePresentersBtn != null) {
+            managePresentersBtn.setDisable(!isSystemAdmin);
+            managePresentersBtn.setStyle(isSystemAdmin ?
+                "-fx-padding: 10; -fx-font-size: 12; -fx-cursor: hand;" :
+                "-fx-padding: 10; -fx-font-size: 12; -fx-opacity: 0.5; -fx-cursor: not-allowed;");
+        }
+
+        // EVENT_ADMIN cannot access settings
+        if (settingsBtn != null) {
+            settingsBtn.setDisable(!isSystemAdmin);
+            settingsBtn.setStyle(isSystemAdmin ?
+                "-fx-padding: 10; -fx-font-size: 12; -fx-cursor: hand;" :
+                "-fx-padding: 10; -fx-font-size: 12; -fx-opacity: 0.5; -fx-cursor: not-allowed;");
+        }
+
+        System.out.println("✓ Features restricted for: " + RoleAuthorizationService.getRoleDisplayName(appContext.currentUser));
     }
 
     private void loadStatisticsAsync() {
@@ -149,46 +202,90 @@ public class AdminDashboardController {
 
     @FXML
     public void onManageUsers() {
+        if (!RoleAuthorizationService.canManageUsers(appContext.currentUser)) {
+            showUnauthorizedAlert("You don't have permission to manage users");
+            return;
+        }
         SceneManager.switchTo("manage_users.fxml", "Event Manager System - Manage Users");
     }
 
     @FXML
     public void onManageEvents() {
+        if (!RoleAuthorizationService.canManageEvents(appContext.currentUser)) {
+            showUnauthorizedAlert("You don't have permission to manage events");
+            return;
+        }
         SceneManager.switchTo("manage_events.fxml", "Event Manager System - Manage Events");
     }
 
     @FXML
     public void onManageSessions() {
+        if (!RoleAuthorizationService.canManageSessions(appContext.currentUser)) {
+            showUnauthorizedAlert("You don't have permission to manage sessions");
+            return;
+        }
         SceneManager.switchTo("session_manager.fxml", "Event Manager System - Manage Sessions");
     }
 
     @FXML
     public void onManageTickets() {
+        if (!RoleAuthorizationService.canManageTickets(appContext.currentUser)) {
+            showUnauthorizedAlert("You don't have permission to manage tickets");
+            return;
+        }
         SceneManager.switchTo("ticket_manager.fxml", "Event Manager System - Manage Tickets");
     }
 
     @FXML
     public void onManagePresenters() {
+        if (!RoleAuthorizationService.canManagePresenters(appContext.currentUser)) {
+            showUnauthorizedAlert("You don't have permission to manage presenters");
+            return;
+        }
         SceneManager.switchTo("presenter_manager.fxml", "Event Manager System - Manage Presenters");
     }
 
     @FXML
     public void onViewReports() {
+        if (!RoleAuthorizationService.canViewReports(appContext.currentUser)) {
+            showUnauthorizedAlert("You don't have permission to view reports");
+            return;
+        }
         SceneManager.switchTo("report_view.fxml", "Event Manager System - Reports & Analytics");
     }
 
     @FXML
     public void onActivityLogs() {
+        if (!RoleAuthorizationService.canViewActivityLogs(appContext.currentUser)) {
+            showUnauthorizedAlert("You don't have permission to view activity logs");
+            return;
+        }
         SceneManager.switchTo("activity_logs.fxml", "Event Manager System - Activity Logs");
     }
 
     @FXML
     public void onSettings() {
+        if (!RoleAuthorizationService.canAccessSettings(appContext.currentUser)) {
+            showUnauthorizedAlert("You don't have permission to access settings");
+            return;
+        }
         System.out.println("Settings clicked");
     }
 
     @FXML
     public void onLogout() {
         SceneManager.switchTo("home.fxml", "Event Manager System - Home");
+    }
+
+    /**
+     * Show unauthorized access alert
+     */
+    private void showUnauthorizedAlert(String message) {
+        javafx.scene.control.Alert alert = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.WARNING);
+        alert.setTitle("Access Denied");
+        alert.setHeaderText("Insufficient Permissions");
+        alert.setContentText(message + "\n\nYour role: " + RoleAuthorizationService.getRoleDisplayName(appContext.currentUser));
+        alert.showAndWait();
+        System.out.println("⚠️ Unauthorized access attempt: " + message);
     }
 }
