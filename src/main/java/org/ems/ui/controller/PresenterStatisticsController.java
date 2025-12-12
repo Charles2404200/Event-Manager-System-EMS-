@@ -15,6 +15,7 @@ import org.ems.domain.model.Presenter;
 import org.ems.ui.stage.FxUtils;
 import org.ems.ui.stage.SceneManager;
 import org.ems.ui.util.AsyncTaskService;
+import org.ems.domain.dto.PresenterStatistics;
 
 import java.util.ArrayList;
 import java.util.List;

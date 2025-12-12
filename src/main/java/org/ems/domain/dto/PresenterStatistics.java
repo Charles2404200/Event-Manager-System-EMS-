@@ -1,5 +1,7 @@
 package org.ems.domain.dto;
 
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -28,8 +30,8 @@ public class PresenterStatistics {
         this.totalSessions = 0;
         this.totalAttendees = 0;
         this.averageAudienceSize = 0;
-        this.eventTypeDistribution = new java.util.HashMap<>();
-        this.sessionEngagementTrends = new java.util.LinkedHashMap<>();
+        this.eventTypeDistribution = new HashMap<>();
+        this.sessionEngagementTrends = new LinkedHashMap<>();
         this.upcomingSessions = 0;
         this.completedSessions = 0;
     }

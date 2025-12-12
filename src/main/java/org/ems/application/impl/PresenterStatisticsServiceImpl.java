@@ -1,6 +1,7 @@
 package org.ems.application.impl;
 
 import org.ems.application.service.PresenterStatisticsService;
+import org.ems.domain.dto.PresenterStatistics;
 
 import java.sql.*;
 import java.time.LocalDateTime;
