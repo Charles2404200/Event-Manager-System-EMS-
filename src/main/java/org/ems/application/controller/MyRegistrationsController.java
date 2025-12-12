@@ -652,67 +652,160 @@ public class MyRegistrationsController {
 
 
     /**
-     * View material in default application
+     * View material - supports both URL and local file paths - ASYNC
      */
     private void viewMaterial(String materialPath, String materialName) {
         long viewStart = System.currentTimeMillis();
         System.out.println("👁 [MyRegistrations] Viewing material: " + materialName);
         System.out.println("    Path: " + materialPath);
 
-        try {
-            java.io.File file = new java.io.File(materialPath);
-            if (file.exists()) {
-                Desktop desktop = Desktop.getDesktop();
-                desktop.open(file);
-                System.out.println("  ✓ Material opened in " + (System.currentTimeMillis() - viewStart) + "ms");
-            } else {
-                showAlert("Warning", "Material file not found at: " + materialPath);
-                System.out.println("  ⚠️ File not found: " + materialPath);
+        AsyncTaskService.runAsync(
+            () -> {
+                try {
+                    // Check if it's a URL
+                    if (materialPath != null && (materialPath.startsWith("http://") || materialPath.startsWith("https://"))) {
+                        // It's a remote URL - open in browser
+                        System.out.println("  🌐 Detected URL, opening in browser...");
+                        if (Desktop.isDesktopSupported()) {
+                            Desktop desktop = Desktop.getDesktop();
+                            if (desktop.isSupported(Desktop.Action.BROWSE)) {
+                                desktop.browse(new java.net.URI(materialPath));
+                                System.out.println("  ✓ Material URL opened in " + (System.currentTimeMillis() - viewStart) + "ms");
+                                return "SUCCESS_URL";
+                            }
+                        }
+                        return "BROWSER_NOT_SUPPORTED";
+                    } else {
+                        // It's a local file path
+                        System.out.println("  📁 Detected local file, opening...");
+                        java.io.File file = new java.io.File(materialPath);
+
+                        // Validate file exists
+                        if (!file.exists()) {
+                            return "FILE_NOT_FOUND";
+                        }
+
+                        // Check if it's a file (not directory)
+                        if (!file.isFile()) {
+                            return "NOT_A_FILE";
+                        }
+
+                        // Try to open with desktop
+                        if (Desktop.isDesktopSupported()) {
+                            Desktop desktop = Desktop.getDesktop();
+                            if (desktop.isSupported(Desktop.Action.OPEN)) {
+                                desktop.open(file);
+                                System.out.println("  ✓ Material opened in " + (System.currentTimeMillis() - viewStart) + "ms");
+                                return "SUCCESS";
+                            }
+                        }
+                        return "DESKTOP_NOT_SUPPORTED";
+                    }
+
+                } catch (Exception e) {
+                    System.err.println("  ✗ Error opening material: " + e.getMessage());
+                    e.printStackTrace();
+                    return "ERROR: " + e.getMessage();
+                }
+            },
+            result -> {
+                String status = (String) result;
+                if ("SUCCESS".equals(status) || "SUCCESS_URL".equals(status)) {
+                    showAlert("Success", "Opening material: " + materialName);
+                } else if ("FILE_NOT_FOUND".equals(status)) {
+                    showAlert("Error", "Material file not found at:\n" + materialPath);
+                    System.out.println("  ⚠️ File not found: " + materialPath);
+                } else if ("NOT_A_FILE".equals(status)) {
+                    showAlert("Error", "Invalid material path (not a file)");
+                } else if ("DESKTOP_NOT_SUPPORTED".equals(status)) {
+                    showAlert("Error", "Cannot open files on this system");
+                } else if ("BROWSER_NOT_SUPPORTED".equals(status)) {
+                    showAlert("Error", "Browser not supported on this system");
+                } else {
+                    showAlert("Error", "Cannot open material: " + status);
+                }
+            },
+            error -> {
+                System.err.println("  ✗ Error in viewMaterial: " + error.getMessage());
+                showAlert("Error", "Failed to open material: " + error.getMessage());
             }
-        } catch (Exception e) {
-            System.err.println("  ✗ Error opening material: " + e.getMessage());
-            showAlert("Error", "Cannot open material: " + e.getMessage());
-        }
+        );
     }
 
     /**
-     * Download material to user's downloads folder
+     * Download material to user's downloads folder - supports both URL and local files - ASYNC
      */
     private void downloadMaterial(String materialPath, String fileName) {
         long downloadStart = System.currentTimeMillis();
         System.out.println("⬇️ [MyRegistrations] Downloading material: " + fileName);
 
-        try {
-            java.io.File sourceFile = new java.io.File(materialPath);
-            if (!sourceFile.exists()) {
-                showAlert("Error", "Source file not found");
-                System.out.println("  ✗ Source file not found: " + materialPath);
-                return;
+        showLoadingPlaceholder();
+
+        AsyncTaskService.runAsync(
+            () -> {
+                try {
+                    // Get downloads folder
+                    String downloadsPath = System.getProperty("user.home") + File.separator + "Downloads";
+                    java.io.File downloadDir = new java.io.File(downloadsPath);
+                    if (!downloadDir.exists()) {
+                        downloadDir.mkdirs();
+                    }
+
+                    java.io.File destFile = new java.io.File(downloadDir, fileName);
+
+                    // Check if it's a URL
+                    if (materialPath != null && (materialPath.startsWith("http://") || materialPath.startsWith("https://"))) {
+                        // Download from URL
+                        System.out.println("  🌐 Downloading from URL: " + materialPath);
+                        try (java.io.InputStream in = new java.net.URL(materialPath).openStream()) {
+                            java.nio.file.Files.copy(
+                                in,
+                                destFile.toPath(),
+                                java.nio.file.StandardCopyOption.REPLACE_EXISTING
+                            );
+                        }
+                        System.out.println("  ✓ Downloaded from URL to: " + destFile.getAbsolutePath());
+                        return "SUCCESS: " + destFile.getAbsolutePath();
+                    } else {
+                        // Copy from local file
+                        System.out.println("  📁 Copying from local file: " + materialPath);
+                        java.io.File sourceFile = new java.io.File(materialPath);
+                        if (!sourceFile.exists()) {
+                            return "ERROR: Source file not found";
+                        }
+
+                        java.nio.file.Files.copy(
+                            sourceFile.toPath(),
+                            destFile.toPath(),
+                            java.nio.file.StandardCopyOption.REPLACE_EXISTING
+                        );
+                        System.out.println("  ✓ Copied to: " + destFile.getAbsolutePath());
+                        return "SUCCESS: " + destFile.getAbsolutePath();
+                    }
+
+                } catch (Exception e) {
+                    System.err.println("  ✗ Download error: " + e.getMessage());
+                    e.printStackTrace();
+                    return "ERROR: " + e.getMessage();
+                }
+            },
+            result -> {
+                showTable();
+                String status = (String) result;
+                if (status.startsWith("SUCCESS:")) {
+                    String path = status.substring(8).trim();
+                    System.out.println("  ✓ Download completed in " + (System.currentTimeMillis() - downloadStart) + "ms");
+                    showAlert("Success", "Material downloaded to:\n" + path);
+                } else if (status.startsWith("ERROR:")) {
+                    showAlert("Error", "Download failed: " + status.substring(6).trim());
+                }
+            },
+            error -> {
+                showTable();
+                System.err.println("  ✗ Error in downloadMaterial: " + error.getMessage());
+                showAlert("Error", "Failed to download material: " + error.getMessage());
             }
-
-            // Get downloads folder
-            String downloadsPath = System.getProperty("user.home") + File.separator + "Downloads";
-            java.io.File downloadDir = new java.io.File(downloadsPath);
-            if (!downloadDir.exists()) {
-                downloadDir.mkdirs();
-            }
-
-            java.io.File destFile = new java.io.File(downloadDir, fileName);
-
-            // Copy file
-            java.nio.file.Files.copy(
-                sourceFile.toPath(),
-                destFile.toPath(),
-                java.nio.file.StandardCopyOption.REPLACE_EXISTING
-            );
-
-            System.out.println("  ✓ Downloaded to: " + destFile.getAbsolutePath());
-            System.out.println("  ✓ Download completed in " + (System.currentTimeMillis() - downloadStart) + "ms");
-            showAlert("Success", "Material downloaded to:\n" + destFile.getAbsolutePath());
-        } catch (Exception e) {
-            System.err.println("  ✗ Download error: " + e.getMessage());
-            showAlert("Error", "Download failed: " + e.getMessage());
-        }
+        );
     }
 
     @FXML
