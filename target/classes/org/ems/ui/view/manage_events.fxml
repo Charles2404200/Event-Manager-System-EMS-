@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?import javafx.scene.layout.BorderPane?>
+<?import javafx.scene.layout.VBox?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.TextField?>
+<?import javafx.scene.control.TableView?>
+<?import javafx.scene.control.TableColumn?>
+<?import javafx.scene.control.ComboBox?>
+<?import javafx.scene.control.DatePicker?>
+<?import javafx.geometry.Insets?>
+
+<BorderPane xmlns="http://javafx.com/javafx"
+            xmlns:fx="http://javafx.com/fxml"
+            fx:controller="org.ems.ui.controller.ManageEventsController"
+            prefWidth="1400" prefHeight="900">
+
+    <top>
+        <VBox style="-fx-background-color: #2c3e50; -fx-padding: 15;" spacing="10">
+            <Label text="Manage Events" style="-fx-font-size: 24; -fx-font-weight: bold; -fx-text-fill: white;"/>
+            <Label text="Create, edit, and manage events with their sessions" style="-fx-font-size: 12; -fx-text-fill: #ecf0f1;"/>
+        </VBox>
+    </top>
+
+    <center>
+        <VBox spacing="15" style="-fx-padding: 20;">
+
+            <!-- Search and Filter Section -->
+            <HBox spacing="10" style="-fx-border-color: #cccccc; -fx-border-width: 1; -fx-padding: 15; -fx-border-radius: 5;">
+                <Label text="Search:" style="-fx-font-size: 12;"/>
+                <TextField fx:id="searchField" promptText="Search by event name, location..." prefWidth="300" style="-fx-padding: 8;"/>
+
+                <Label text="Type:" style="-fx-font-size: 12;"/>
+                <ComboBox fx:id="typeFilterCombo" prefWidth="150" style="-fx-padding: 8;"/>
+
+                <Button text="🔍 Search" style="-fx-padding: 8; -fx-cursor: hand;" onAction="#onSearch"/>
+                <Button text="↻ Reset" style="-fx-padding: 8; -fx-cursor: hand;" onAction="#onReset"/>
+            </HBox>
+
+            <!-- Action Buttons -->
+            <HBox spacing="10" style="-fx-padding: 10;">
+                <Button text="➕ Create Event" prefWidth="120" style="-fx-padding: 10; -fx-font-size: 12; -fx-cursor: hand; -fx-text-fill: white; -fx-background-color: #27ae60;" onAction="#onCreateEvent"/>
+                <Button text="✏️ Edit Selected" prefWidth="120" style="-fx-padding: 10; -fx-font-size: 12; -fx-cursor: hand;" onAction="#onEditEvent"/>
+                <Button text="🗑️ Delete Selected" prefWidth="120" style="-fx-padding: 10; -fx-font-size: 12; -fx-cursor: hand; -fx-text-fill: white; -fx-background-color: #e74c3c;" onAction="#onDeleteEvent"/>
+                <Button text="📋 View Sessions" prefWidth="130" style="-fx-padding: 10; -fx-font-size: 12; -fx-cursor: hand;" onAction="#onViewSessions"/>
+                <Button text="📊 View Details" prefWidth="120" style="-fx-padding: 10; -fx-font-size: 12; -fx-cursor: hand;" onAction="#onViewDetails"/>
+            </HBox>
+
+            <!-- Events Table -->
+            <VBox style="-fx-border-color: #cccccc; -fx-border-width: 1; -fx-padding: 10; -fx-border-radius: 5;" VBox.vgrow="ALWAYS">
+                <Label text="Events List" style="-fx-font-size: 14; -fx-font-weight: bold; -fx-padding: 5;"/>
+
+                <TableView fx:id="eventsTable" prefHeight="500" VBox.vgrow="ALWAYS">
+                    <columns>
+                        <TableColumn text="ID" prefWidth="180" sortable="true"/>
+                        <TableColumn text="Event Name" prefWidth="200" sortable="true"/>
+                        <TableColumn text="Type" prefWidth="120" sortable="true"/>
+                        <TableColumn text="Location" prefWidth="150" sortable="true"/>
+                        <TableColumn text="Start Date" prefWidth="120" sortable="true"/>
+                        <TableColumn text="End Date" prefWidth="120" sortable="true"/>
+                        <TableColumn text="Status" prefWidth="100" sortable="true"/>
+                        <TableColumn text="Sessions" prefWidth="100" sortable="true"/>
+                    </columns>
+                </TableView>
+
+                <Label fx:id="recordCountLabel" text="Total Records: 0" style="-fx-padding: 10; -fx-font-size: 11; -fx-text-fill: #666;"/>
+            </VBox>
+
+            <!-- Back Button -->
+            <HBox spacing="10" style="-fx-padding: 10;">
+                <Button text="← Back to Admin Dashboard" style="-fx-padding: 10; -fx-font-size: 12; -fx-cursor: hand;" onAction="#onBack"/>
+            </HBox>
+
+        </VBox>
+    </center>
+
+</BorderPane>
+

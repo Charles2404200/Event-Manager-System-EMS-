@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<BorderPane xmlns="http://javafx.com/javafx"
+            xmlns:fx="http://javafx.com/fxml"
+            fx:controller="org.ems.ui.controller.PresenterActivityExportController"
+            prefWidth="900" prefHeight="500"
+            style="-fx-background-color: linear-gradient(to bottom, #f5f7fa, #e4ebf5);">
+
+    <!-- HEADER -->
+    <top>
+        <VBox spacing="5" style="-fx-padding: 20 20 10 20;">
+            <Label text="Presenter Activity Summary"
+                   style="-fx-font-size: 22; -fx-font-weight: bold;"/>
+            <Label fx:id="presenterInfoLabel"
+                   style="-fx-font-size: 13; -fx-text-fill: #555;"/>
+            <Label fx:id="statusLabel"
+                   style="-fx-font-size: 12; -fx-text-fill: #999;"/>
+        </VBox>
+    </top>
+
+    <!-- CENTER: mô tả + nút export -->
+    <center>
+        <VBox spacing="20" alignment="CENTER"
+              style="-fx-padding: 20;">
+            <Label text="Export all your assigned sessions and related event info as a CSV summary."
+                   wrapText="true"
+                   style="-fx-font-size: 13; -fx-text-fill: #333;"/>
+
+            <Button text="📤 Export My Activity Summary"
+                    prefWidth="240" prefHeight="45"
+                    style="-fx-padding: 10; -fx-font-size: 13; -fx-cursor: hand;
+                       -fx-background-color: #9b59b6; -fx-text-fill: white;
+                       -fx-background-radius: 22;"
+                    onAction="#onExportSummary"/>
+
+            <!-- Loading container giống cấu trúc bạn muốn -->
+            <VBox fx:id="exportLoadingContainer"
+                  spacing="5"
+                  visible="false"
+                  style="-fx-padding: 10;
+                     -fx-border-radius: 5;
+                     -fx-background-radius: 5;">
+                <HBox spacing="10" alignment="CENTER">
+                    <ProgressBar fx:id="exportProgressBar"
+                                 prefWidth="300"
+                                 visible="false"
+                                 style="-fx-padding: 2;"/>
+                </HBox>
+
+                <HBox spacing="10" alignment="CENTER">
+                    <Label fx:id="progressLabel"
+                           text="Loading..."
+                           visible="false"
+                           style="-fx-text-fill: black; -fx-font-size: 12;"/>
+                </HBox>
+            </VBox>
+        </VBox>
+    </center>
+
+
+
+    <!-- FOOTER: nút back -->
+    <bottom>
+        <HBox alignment="CENTER_RIGHT"
+              style="-fx-padding: 10 20 20 20;">
+            <Button text="Back to Dashboard"
+                    onAction="#onBack"
+                    style="-fx-background-color: #4a90e2;
+                           -fx-text-fill: white;
+                           -fx-background-radius: 20;
+                           -fx-padding: 6 20;
+                           -fx-font-size: 13;
+                           -fx-font-weight: bold;"/>
+        </HBox>
+    </bottom>
+
+</BorderPane>
