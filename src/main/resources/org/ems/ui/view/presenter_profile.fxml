@@ -7,7 +7,7 @@
 
 <VBox xmlns="http://javafx.com/javafx"
       xmlns:fx="http://javafx.com/fxml"
-      fx:controller="org.ems.ui.controller.PresenterProfileController"
+      fx:controller="org.ems.application.controller.PresenterProfileController"
       spacing="10"
       style="-fx-padding: 20;">
 

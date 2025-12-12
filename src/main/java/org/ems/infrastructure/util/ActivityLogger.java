@@ -1,6 +1,6 @@
 package org.ems.infrastructure.util;
 
-import org.ems.config.AppContext;
+import org.ems.infrastructure.config.AppContext;
 import org.ems.domain.model.ActivityLog;
 import org.ems.domain.repository.ActivityLogRepository;
 

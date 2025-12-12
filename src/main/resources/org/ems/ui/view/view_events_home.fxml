@@ -13,7 +13,7 @@
 
 <BorderPane xmlns="http://javafx.com/javafx"
             xmlns:fx="http://javafx.com/fxml"
-            fx:controller="org.ems.ui.controller.ViewEventsHomeController"
+            fx:controller="org.ems.application.controller.ViewEventsHomeController"
             prefWidth="1600" prefHeight="900">
 
     <top>

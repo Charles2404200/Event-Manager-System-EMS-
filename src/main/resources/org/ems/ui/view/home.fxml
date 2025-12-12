@@ -6,7 +6,7 @@
 
 <BorderPane xmlns="http://javafx.com/javafx"
             xmlns:fx="http://javafx.com/fxml"
-            fx:controller="org.ems.ui.controller.HomeController"
+            fx:controller="org.ems.application.controller.HomeController"
             prefWidth="1000" prefHeight="700"
             style="-fx-background-color: linear-gradient(to bottom, #f5f7fa, #e4ebf5);">
 

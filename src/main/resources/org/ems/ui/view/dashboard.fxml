@@ -11,7 +11,7 @@
 
 <BorderPane xmlns="http://javafx.com/javafx"
             xmlns:fx="http://javafx.com/fxml"
-            fx:controller="org.ems.ui.controller.DashboardController"
+            fx:controller="org.ems.application.controller.DashboardController"
             prefWidth="1400" prefHeight="900">
 
     <!-- TOP: Header with user info -->

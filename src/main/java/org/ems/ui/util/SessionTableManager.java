@@ -3,7 +3,7 @@ package org.ems.ui.util;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import org.ems.domain.model.Session;
-import org.ems.application.service.SessionEventManager;
+import org.ems.application.service.session.SessionEventManager;
 
 import java.time.format.DateTimeFormatter;
 import java.util.Map;

@@ -1,6 +1,6 @@
 package org.ems.infrastructure.db;
 
-import org.ems.config.DatabaseConfig;
+import org.ems.infrastructure.config.DatabaseConfig;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;

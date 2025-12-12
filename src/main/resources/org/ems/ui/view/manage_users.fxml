@@ -13,7 +13,7 @@
 
 <BorderPane xmlns="http://javafx.com/javafx"
             xmlns:fx="http://javafx.com/fxml"
-            fx:controller="org.ems.ui.controller.ManageUsersController"
+            fx:controller="org.ems.application.controller.ManageUsersController"
             prefWidth="1200" prefHeight="800">
 
     <top>

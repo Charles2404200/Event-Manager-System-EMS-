@@ -6,11 +6,10 @@ import javafx.scene.control.ProgressBar;
 import javafx.scene.layout.VBox;
 import org.ems.domain.model.Event;
 import org.ems.domain.model.Session;
-import org.ems.application.service.SessionManagementService;
-import org.ems.application.service.SessionEventManager;
-import org.ems.application.service.SessionPresenterManager;
+import org.ems.application.service.session.SessionManagementService;
+import org.ems.application.service.session.SessionEventManager;
+import org.ems.application.service.session.SessionPresenterManager;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 

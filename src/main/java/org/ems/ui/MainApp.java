@@ -5,7 +5,7 @@ import javafx.fxml.FXMLLoader;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.stage.Stage;
-import org.ems.config.AppContext;
+import org.ems.infrastructure.config.AppContext;
 import org.ems.infrastructure.db.DatabaseInitializer;
 import org.ems.ui.stage.SceneManager;
 

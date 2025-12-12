@@ -5,7 +5,7 @@
 <?import javafx.scene.layout.*?>
 
 <BorderPane xmlns="http://javafx.fxml.com/javafx/21" xmlns:fx="http://javafx.fxml.com/fxml/1"
-            fx:controller="org.ems.ui.controller.MyRegistrationsController"
+            fx:controller="org.ems.application.controller.MyRegistrationsController"
             prefWidth="1400" prefHeight="900"
             style="-fx-font-family: 'Segoe UI'; -fx-font-size: 11;">
 

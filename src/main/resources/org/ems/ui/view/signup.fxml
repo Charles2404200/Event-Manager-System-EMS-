@@ -11,7 +11,7 @@
 <?import javafx.geometry.Insets?>
 <?import javafx.geometry.Pos?>
 
-<AnchorPane fx:controller="org.ems.ui.controller.SignupController"
+<AnchorPane fx:controller="org.ems.application.controller.SignupController"
             xmlns:fx="http://javafx.com/fxml"
             prefWidth="800" prefHeight="700"
             style="-fx-background-color: linear-gradient(to bottom, #f5f7fa, #e4ebf5);">

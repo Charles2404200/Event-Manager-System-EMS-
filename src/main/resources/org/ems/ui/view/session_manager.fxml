@@ -8,7 +8,7 @@
 
 <BorderPane xmlns="http://javafx.com/javafx"
             xmlns:fx="http://javafx.com/fxml"
-            fx:controller="org.ems.ui.controller.SessionManagerController"
+            fx:controller="org.ems.application.controller.SessionManagerController"
             prefWidth="1400" prefHeight="900">
 
     <top>
@@ -100,6 +100,14 @@
                 <VBox spacing="8">
                     <Label text="Capacity:" style="-fx-font-size: 11; -fx-font-weight: bold;"/>
                     <Label fx:id="detailCapacityLabel" text="-" style="-fx-font-size: 12; -fx-text-fill: #555;"/>
+                </VBox>
+
+                <VBox spacing="8">
+                    <Label text="Material:" style="-fx-font-size: 11; -fx-font-weight: bold;"/>
+                    <HBox spacing="5" alignment="CENTER_LEFT">
+                        <Label fx:id="detailMaterialLabel" text="No material uploaded" style="-fx-font-size: 12; -fx-text-fill: #555; -fx-wrap-text: true;" HBox.hgrow="ALWAYS"/>
+                        <Button fx:id="viewMaterialButton" text="📥 View" prefWidth="70" style="-fx-padding: 5; -fx-font-size: 10;" visible="false" onAction="#onViewMaterial"/>
+                    </HBox>
                 </VBox>
 
                 <VBox spacing="8" VBox.vgrow="ALWAYS">

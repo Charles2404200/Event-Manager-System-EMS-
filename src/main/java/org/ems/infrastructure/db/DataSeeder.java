@@ -1,6 +1,6 @@
 package org.ems.infrastructure.db;
 
-import org.ems.config.DatabaseConfig;
+import org.ems.infrastructure.config.DatabaseConfig;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
