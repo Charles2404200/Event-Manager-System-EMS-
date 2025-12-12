@@ -644,7 +644,6 @@ public class DashboardController {
     public void onViewPresenterStats() {
         // TODO: View presenter statistics
         System.out.println("View Stats clicked");
-        SceneManager.switchTo("presenter_statistics.fxml", "EMS - Presenter Statistics");
     }
 
     @FXML
