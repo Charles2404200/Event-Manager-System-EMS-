@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?import javafx.scene.layout.BorderPane?>
+<?import javafx.scene.layout.VBox?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.GridPane?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.ProgressIndicator?>
+<?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.chart.PieChart?>
+<?import javafx.scene.chart.BarChart?>
+<?import javafx.scene.chart.CategoryAxis?>
+<?import javafx.scene.chart.NumberAxis?>
+<?import javafx.geometry.Insets?>
+
+<BorderPane xmlns="http://javafx.com/javafx"
+            xmlns:fx="http://javafx.com/fxml"
+            fx:controller="org.ems.ui.controller.PresenterStatisticsController"
+            prefWidth="1400" prefHeight="900">
+
+    <!-- Top: Header -->
+    <top>
+        <VBox style="-fx-background-color: #9b59b6; -fx-padding: 20;" spacing="10">
+            <Label text="📊 Presenter Statistics" style="-fx-font-size: 24; -fx-font-weight: bold; -fx-text-fill: white;"/>
+            <Label fx:id="presenterNameLabel" text="Statistics for: Loading..." style="-fx-font-size: 13; -fx-text-fill: #f4ecf7;"/>
+        </VBox>
+    </top>
+
+    <!-- Center: Main Content -->
+    <center>
+        <ScrollPane fitToWidth="true" style="-fx-background-color: #f5f5f5;">
+            <VBox spacing="20" style="-fx-padding: 30;">
+
+                <!-- Loading Indicator -->
+                <VBox fx:id="loadingBox" alignment="CENTER" spacing="15" style="-fx-padding: 100;">
+                    <ProgressIndicator prefWidth="80" prefHeight="80"/>
+                    <Label text="Loading statistics..." style="-fx-font-size: 16; -fx-text-fill: #666;"/>
+                </VBox>
+
+                <!-- Main Content -->
+                <VBox fx:id="contentBox" spacing="20" visible="false">
+
+                    <!-- Action Buttons -->
+                    <HBox spacing="10" style="-fx-padding: 0 0 10 0;">
+                        <Button text="🔄 Refresh" onAction="#onRefresh"
+                                style="-fx-padding: 10 20; -fx-font-size: 12; -fx-cursor: hand; -fx-background-color: #3498db; -fx-text-fill: white; -fx-border-radius: 4;"/>
+                        <Button text="📤 Export Statistics" onAction="#onExportStatistics"
+                                style="-fx-padding: 10 20; -fx-font-size: 12; -fx-cursor: hand; -fx-background-color: #27ae60; -fx-text-fill: white; -fx-border-radius: 4;"/>
+                    </HBox>
+
+                    <!-- Summary Statistics Cards -->
+                    <VBox spacing="15" style="-fx-border-color: #ddd; -fx-border-width: 1; -fx-padding: 20; -fx-border-radius: 5; -fx-background-color: white;">
+                        <Label text="📈 Summary Metrics" style="-fx-font-size: 16; -fx-font-weight: bold; -fx-text-fill: #2c3e50;"/>
+
+                        <GridPane hgap="20" vgap="15">
+                            <!-- Row 1 -->
+                            <VBox style="-fx-border-color: #9b59b6; -fx-border-width: 2; -fx-padding: 20; -fx-border-radius: 8; -fx-background-color: #f4ecf7;" spacing="8" prefWidth="200" alignment="CENTER" GridPane.columnIndex="0" GridPane.rowIndex="0">
+                                <Label text="Total Sessions" style="-fx-font-size: 12; -fx-text-fill: #2c3e50; -fx-font-weight: bold;"/>
+                                <Label fx:id="totalSessionsLabel" text="0" style="-fx-font-size: 36; -fx-font-weight: bold; -fx-text-fill: #9b59b6;"/>
+                            </VBox>
+
+                            <VBox style="-fx-border-color: #3498db; -fx-border-width: 2; -fx-padding: 20; -fx-border-radius: 8; -fx-background-color: #ebf5fb;" spacing="8" prefWidth="200" alignment="CENTER" GridPane.columnIndex="1" GridPane.rowIndex="0">
+                                <Label text="Total Attendees" style="-fx-font-size: 12; -fx-text-fill: #2c3e50; -fx-font-weight: bold;"/>
+                                <Label fx:id="totalAttendeesLabel" text="0" style="-fx-font-size: 36; -fx-font-weight: bold; -fx-text-fill: #3498db;"/>
+                            </VBox>
+
+                            <VBox style="-fx-border-color: #f39c12; -fx-border-width: 2; -fx-padding: 20; -fx-border-radius: 8; -fx-background-color: #fef5e7;" spacing="8" prefWidth="200" alignment="CENTER" GridPane.columnIndex="2" GridPane.rowIndex="0">
+                                <Label text="Avg Audience Size" style="-fx-font-size: 12; -fx-text-fill: #2c3e50; -fx-font-weight: bold;"/>
+                                <Label fx:id="avgAudienceSizeLabel" text="0" style="-fx-font-size: 36; -fx-font-weight: bold; -fx-text-fill: #f39c12;"/>
+                            </VBox>
+
+                            <!-- Row 2 -->
+                            <VBox style="-fx-border-color: #2ecc71; -fx-border-width: 2; -fx-padding: 20; -fx-border-radius: 8; -fx-background-color: #eafaf1;" spacing="8" prefWidth="200" alignment="CENTER" GridPane.columnIndex="0" GridPane.rowIndex="1">
+                                <Label text="Upcoming Sessions" style="-fx-font-size: 12; -fx-text-fill: #2c3e50; -fx-font-weight: bold;"/>
+                                <Label fx:id="upcomingSessionsLabel" text="0" style="-fx-font-size: 36; -fx-font-weight: bold; -fx-text-fill: #2ecc71;"/>
+                            </VBox>
+
+                            <VBox style="-fx-border-color: #95a5a6; -fx-border-width: 2; -fx-padding: 20; -fx-border-radius: 8; -fx-background-color: #f2f3f4;" spacing="8" prefWidth="200" alignment="CENTER" GridPane.columnIndex="1" GridPane.rowIndex="1">
+                                <Label text="Completed Sessions" style="-fx-font-size: 12; -fx-text-fill: #2c3e50; -fx-font-weight: bold;"/>
+                                <Label fx:id="completedSessionsLabel" text="0" style="-fx-font-size: 36; -fx-font-weight: bold; -fx-text-fill: #95a5a6;"/>
+                            </VBox>
+                        </GridPane>
+                    </VBox>
+
+                    <!-- Charts Section -->
+                    <HBox spacing="20">
+                        <!-- Event Type Distribution -->
+                        <VBox spacing="10" style="-fx-border-color: #ddd; -fx-border-width: 1; -fx-padding: 20; -fx-border-radius: 5; -fx-background-color: white;" HBox.hgrow="ALWAYS">
+                            <Label text="📊 Event Type Distribution" style="-fx-font-size: 14; -fx-font-weight: bold; -fx-text-fill: #2c3e50;"/>
+                            <PieChart fx:id="eventTypeChart" prefHeight="300" legendVisible="true"/>
+                        </VBox>
+                    </HBox>
+
+                    <!-- Session Engagement Trends -->
+                    <VBox spacing="10" style="-fx-border-color: #ddd; -fx-border-width: 1; -fx-padding: 20; -fx-border-radius: 5; -fx-background-color: white;">
+                        <Label text="📈 Session Engagement Trends" style="-fx-font-size: 14; -fx-font-weight: bold; -fx-text-fill: #2c3e50;"/>
+                        <Label text="Top 10 sessions by attendee count" style="-fx-font-size: 11; -fx-text-fill: #666;"/>
+                        <BarChart fx:id="engagementChart" prefHeight="350" legendVisible="false">
+                            <xAxis>
+                                <CategoryAxis side="BOTTOM" label="Session"/>
+                            </xAxis>
+                            <yAxis>
+                                <NumberAxis side="LEFT" label="Attendees"/>
+                            </yAxis>
+                        </BarChart>
+                    </VBox>
+
+                </VBox>
+
+            </VBox>
+        </ScrollPane>
+    </center>
+
+    <!-- Bottom: Navigation -->
+    <bottom>
+        <HBox spacing="10" style="-fx-padding: 15; -fx-background-color: #f5f5f5; -fx-border-color: #ddd; -fx-border-width: 1 0 0 0;">
+            <Button text="← Back to Dashboard" onAction="#onBack"
+                    style="-fx-padding: 10 20; -fx-font-size: 12; -fx-cursor: hand;"/>
+        </HBox>
+    </bottom>
+
+</BorderPane>
